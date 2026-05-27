@@ -24,20 +24,15 @@ if 'logeado' not in st.session_state:
 
 def iniciar_sesion(usuario, password):
     try:
-        # Lee la pestaña "Usuarios" en el Excel de Servicio Técnico
         df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
     except Exception:
-        st.error("⚠️ No se encontró la pestaña 'Usuarios' en tu Excel de Servicio Técnico. Por favor, créala.")
+        st.error("⚠️ No se encontró la pestaña 'Usuarios' en tu Excel de Servicio Técnico.")
         return
         
-    # LIMPIEZA DE DATOS: Quitamos espacios extra a los usuarios
     df_usuarios['Usuario'] = df_usuarios['Usuario'].astype(str).str.strip()
-    
-    # LIMPIEZA DE CONTRASEÑA: Quitamos espacios y borramos el ".0" fantasma si Excel lo detectó como número
     df_usuarios['Password'] = df_usuarios['Password'].astype(str).str.strip()
     df_usuarios['Password'] = df_usuarios['Password'].apply(lambda x: x[:-2] if x.endswith('.0') else x)
     
-    # Limpiamos también lo que el usuario escribió en pantalla
     user_limpio = str(usuario).strip()
     pass_limpia = str(password).strip()
 
@@ -59,10 +54,10 @@ if not st.session_state['logeado']:
         pass_input = st.text_input("Contraseña", type="password")
         if st.form_submit_button("Entrar"):
             iniciar_sesion(user_input, pass_input)
-    st.stop() # Detiene la aplicación aquí si no ha iniciado sesión
+    st.stop()
 
 # ==========================================
-# FUNCIONES DE UTILIDAD (Eliminación Real y Formateo)
+# FUNCIONES DE UTILIDAD
 # ==========================================
 def preparar_df(df, columnas):
     if df.empty:
@@ -89,7 +84,6 @@ def limpiar_serie(valor):
     return val_str[:-2] if val_str.endswith('.0') else val_str
 
 def eliminar_registro_gsheets(conexion, df_original, id_a_borrar):
-    """Borra el registro sobreescribiendo el renglón final del Excel con espacios en blanco"""
     df_nuevo = df_original[df_original['ID'] != id_a_borrar].copy()
     diferencia = len(df_original) - len(df_nuevo)
     if diferencia > 0:
@@ -100,7 +94,14 @@ def eliminar_registro_gsheets(conexion, df_original, id_a_borrar):
         conexion.update(data=df_nuevo)
 
 # ==========================================
-# MENÚ PRINCIPAL
+# NOMBRES DE MENÚ (Para evitar errores de texto)
+# ==========================================
+MENU_SERV = "🔧 Servicio Técnico"
+MENU_MKT = "📈 Marketing"
+MENU_USR = "⚙️ Panel de Usuarios"
+
+# ==========================================
+# MENÚ PRINCIPAL LATERAL
 # ==========================================
 st.sidebar.markdown(f"👤 **Usuario:** {st.session_state['usuario']}")
 st.sidebar.markdown(f"🛡️ **Rol:** {st.session_state['rol']}")
@@ -109,11 +110,10 @@ if st.sidebar.button("Cerrar Sesión"):
     st.rerun()
 
 st.sidebar.markdown("---")
-opciones_menu = ["🔧 Servicio Técnico", "📈 Marketing"]
+opciones_menu = [MENU_SERV, MENU_MKT]
 
-# Solo el Administrador puede ver la pestaña de gestión de usuarios
 if st.session_state['rol'] == 'Admin':
-    opciones_menu.append("⚙️ Panel de Usuarios")
+    opciones_menu.append(MENU_USR)
 
 division = st.sidebar.radio("Selecciona la División:", opciones_menu)
 st.title("Panel de Control Sincronizado")
@@ -121,18 +121,16 @@ st.title("Panel de Control Sincronizado")
 # ==========================================
 # DIVISIÓN: SERVICIO TÉCNICO
 # ==========================================
-if division == "🔧 Servicio Técnico":
+if division == MENU_SERV:
     st.header("Gestión de Servicio")
     cols_servicio = ["ID", "Cliente", "Caso reportado", "Modelo", "Numero de serie", "Seguimiento con fabrica", "Solucion del problema", "Fecha de reporte", "Fecha de cierre", "Estatus"]
     
     df_servicio = conn_servicio.read(ttl=0)
     df_servicio = preparar_df(df_servicio, cols_servicio).fillna("")
     
-    # Limpia decimales de los números de serie (.0)
     if not df_servicio.empty:
         df_servicio['Numero de serie'] = df_servicio['Numero de serie'].apply(limpiar_serie)
 
-    # ALERTA 3 DÍAS SIN SEGUIMIENTO
     hoy = date.today()
     hubo_cambios = False
     if not df_servicio.empty:
@@ -156,7 +154,6 @@ if division == "🔧 Servicio Técnico":
         if hubo_cambios: 
             conn_servicio.update(data=df_servicio)
 
-    # REGISTRO
     with st.expander("➕ Registrar o Actualizar Caso", expanded=True):
         num_serie = st.text_input("🔍 Ingresa el Número de Serie:")
         if num_serie:
@@ -192,7 +189,6 @@ if division == "🔧 Servicio Técnico":
                     st.success("Caso registrado con éxito.")
                     st.rerun()
 
-    # TABLA Y GESTIÓN
     st.subheader("Casos Registrados")
     if not df_servicio.empty:
         st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True)
@@ -211,7 +207,6 @@ if division == "🔧 Servicio Técnico":
                 st.success("Caso finalizado con éxito.")
                 st.rerun()
                 
-        # Solo el Admin puede ver y usar el botón de eliminar
         if st.session_state['rol'] == 'Admin':
             with col_del:
                 st.write(""); st.write("")
@@ -225,9 +220,97 @@ if division == "🔧 Servicio Técnico":
 # ==========================================
 # DIVISIÓN: MARKETING
 # ==========================================
-elif division == "📈 Marketing":
+elif division == MENU_MKT:
     st.header("Gestión de Préstamos")
     cols_mkt = ["ID", "KOL", "Lugar de prestamo", "Equipo", "Dias de licencia", "Fecha de inicio", "Fecha de finalizacion", "Estado"]
     
     df_marketing = conn_marketing.read(ttl=0)
-    df_marketing = preparar_df(df_marketing, cols_mkt).fillna
+    df_marketing = preparar_df(df_marketing, cols_mkt).fillna("")
+
+    hoy = date.today()
+    if not df_marketing.empty:
+        for index, row in df_marketing.iterrows():
+            if str(row['Estado']) != 'Finalizado' and str(row['Fecha de finalizacion']).strip() != "":
+                try:
+                    fecha_fin = datetime.strptime(str(row['Fecha de finalizacion']), '%Y-%m-%d').date()
+                    dias_restantes = (fecha_fin - hoy).days
+                    if 0 <= dias_restantes <= 5: 
+                        st.warning(f"⚠️ **VENCIMIENTO:** '{row['Equipo']}' con '{row['KOL']}' finaliza en {dias_restantes} días.")
+                    elif dias_restantes < 0: 
+                        st.error(f"❌ **VENCIDO:** Préstamo a '{row['KOL']}' expiró hace {abs(dias_restantes)} días.")
+                except ValueError: 
+                    pass
+
+    with st.expander("➕ Registrar Préstamo", expanded=True):
+        with st.form("nuevo_prestamo", clear_on_submit=True):
+            kol = st.text_input("Nombre KOL")
+            lugar = st.text_input("Lugar Préstamo")
+            equipo = st.text_input("Equipo")
+            c1, c2 = st.columns(2)
+            with c1: f_inicio = st.date_input("Inicio")
+            with c2: f_fin = st.date_input("Finalización")
+            
+            if st.form_submit_button("Guardar Préstamo"):
+                dias_lic = (f_fin - f_inicio).days
+                if dias_lic < 0: 
+                    st.error("La fecha final no puede ser menor a la inicial.")
+                else:
+                    nuevo_id = int(df_marketing['ID'].max() + 1) if not df_marketing.empty else 1
+                    nuevo_reg = pd.DataFrame([{"ID": nuevo_id, "KOL": kol, "Lugar de prestamo": lugar, "Equipo": equipo, "Dias de licencia": dias_lic, "Fecha de inicio": str(f_inicio), "Fecha de finalizacion": str(f_fin), "Estado": "Activo"}])
+                    conn_marketing.update(data=pd.concat([df_marketing, nuevo_reg], ignore_index=True))
+                    st.success("Préstamo registrado exitosamente.")
+                    st.rerun()
+
+    st.subheader("Equipos en Préstamo")
+    if not df_marketing.empty:
+        st.dataframe(df_marketing.style.apply(color_filas, axis=1), use_container_width=True)
+        st.write("### ⚙️ Gestionar Préstamos")
+        col_sel_m, col_fin_m, col_del_m = st.columns([2, 1, 1])
+        with col_sel_m:
+            id_mkt = st.selectbox("Selecciona ID:", df_marketing['ID'].unique(), key="gest_mkt")
+        with col_fin_m:
+            st.write(""); st.write("")
+            if st.button("✅ Finalizar Préstamo"):
+                idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
+                df_marketing.at[idx, 'Estado'] = 'Finalizado'
+                conn_marketing.update(data=df_marketing)
+                st.success("Préstamo finalizado con éxito.")
+                st.rerun()
+                
+        if st.session_state['rol'] == 'Admin':
+            with col_del_m:
+                st.write(""); st.write("")
+                if st.button("🗑️ Borrar Préstamo"):
+                    eliminar_registro_gsheets(conn_marketing, df_marketing, id_mkt)
+                    st.success("Préstamo eliminado permanentemente de la nube.")
+                    st.rerun()
+    else:
+        st.info("No hay préstamos registrados actualmente.")
+
+# ==========================================
+# DIVISIÓN: PANEL DE USUARIOS (SOLO ADMIN)
+# ==========================================
+elif division == MENU_USR:
+    st.header("Gestión de Usuarios del Sistema")
+    st.info("Solo los administradores tienen acceso a este panel.")
+    
+    try:
+        df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
+        st.dataframe(df_usuarios, use_container_width=True)
+        
+        with st.expander("➕ Crear Nuevo Usuario", expanded=True):
+            with st.form("nuevo_usuario", clear_on_submit=True):
+                nuevo_user = st.text_input("Nombre de Usuario")
+                nuevo_pass = st.text_input("Contraseña")
+                nuevo_rol = st.selectbox("Rol", ["Usuario", "Admin"])
+                
+                if st.form_submit_button("Crear Usuario"):
+                    if nuevo_user and nuevo_pass:
+                        fila_user = pd.DataFrame([{"Usuario": str(nuevo_user).strip(), "Password": str(nuevo_pass).strip(), "Rol": str(nuevo_rol).strip()}])
+                        conn_servicio.update(worksheet="Usuarios", data=pd.concat([df_usuarios, fila_user], ignore_index=True))
+                        st.success(f"Usuario '{nuevo_user}' creado con éxito.")
+                        st.rerun()
+                    else:
+                        st.error("Por favor, llena todos los campos.")
+    except Exception as e:
+        st.error("No se pudo cargar la pestaña de Usuarios. Asegúrate de que exista en tu archivo de Excel de Servicio.")
