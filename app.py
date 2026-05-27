@@ -153,9 +153,7 @@ if division == MENU_SERV:
             conn_servicio.update(data=df_servicio)
 
     with st.expander("➕ Registrar o Actualizar Caso", expanded=True):
-        # Se agrega la 'key' para poder limpiar este campo manualmente
-        num_serie = st.text_input("🔍 Ingresa el Número de Serie:", key="input_serie")
-        
+        num_serie = st.text_input("🔍 Ingresa el Número de Serie:")
         if num_serie:
             num_serie_str = str(num_serie).strip()
             coincidencias = df_servicio[df_servicio['Numero de serie'] == num_serie_str]
@@ -172,17 +170,16 @@ if division == MENU_SERV:
                     df_servicio.at[idx, 'Seguimiento con fabrica'] = texto_final
                     df_servicio.at[idx, 'Estatus'] = 'Activo'
                     conn_servicio.update(data=df_servicio)
-                    
-                    # Limpiamos el buscador del número de serie
-                    st.session_state['input_serie'] = ""
                     st.success("Seguimiento guardado exitosamente.")
                     st.rerun()
                 st.markdown("---")
             
+            # FORMULARIO CON MENÚ DESPLEGABLE DE MODELOS
             with st.form("nuevo_caso", clear_on_submit=True):
                 cliente = st.text_input("Cliente")
                 
-                # Lista de Modelos (puedes modificarlos aquí)
+                # --- AQUÍ DEFINES TU LISTA DE MODELOS ---
+                # Puedes agregar o quitar nombres dentro de los corchetes separados por comas
                 modelos_disponibles = ["SonoBook", "Modelo Alfa", "Modelo Beta", "Modelo Gamma", "Otro / Particular"]
                 modelo = st.selectbox("Modelo del Equipo", modelos_disponibles)
                 
@@ -206,9 +203,6 @@ if division == MENU_SERV:
                         "Estatus": "Activo"
                     }])
                     conn_servicio.update(data=pd.concat([df_servicio, nuevo_registro], ignore_index=True))
-                    
-                    # Limpiamos el buscador del número de serie
-                    st.session_state['input_serie'] = ""
                     st.success("Caso registrado con éxito.")
                     st.rerun()
 
