@@ -153,7 +153,9 @@ if division == MENU_SERV:
             conn_servicio.update(data=df_servicio)
 
     with st.expander("➕ Registrar o Actualizar Caso", expanded=True):
-        num_serie = st.text_input("🔍 Ingresa el Número de Serie:")
+        # Se agrega la 'key' para poder limpiar este campo manualmente
+        num_serie = st.text_input("🔍 Ingresa el Número de Serie:", key="input_serie")
+        
         if num_serie:
             num_serie_str = str(num_serie).strip()
             coincidencias = df_servicio[df_servicio['Numero de serie'] == num_serie_str]
@@ -170,17 +172,18 @@ if division == MENU_SERV:
                     df_servicio.at[idx, 'Seguimiento con fabrica'] = texto_final
                     df_servicio.at[idx, 'Estatus'] = 'Activo'
                     conn_servicio.update(data=df_servicio)
+                    
+                    # Limpiamos el buscador del número de serie
+                    st.session_state['input_serie'] = ""
                     st.success("Seguimiento guardado exitosamente.")
                     st.rerun()
                 st.markdown("---")
             
-            # FORMULARIO CON MENÚ DESPLEGABLE DE MODELOS
             with st.form("nuevo_caso", clear_on_submit=True):
                 cliente = st.text_input("Cliente")
                 
-                # --- AQUÍ DEFINES TU LISTA DE MODELOS ---
-                # Puedes agregar o quitar nombres dentro de los corchetes separados por comas
-                modelos_disponibles = ["ECO 1","ECO 2", "ECO 3 EXP", "ECO 5", "ECO 6","SonoEye P1", "SonoEye P2", "SonoEye P3", "SonoEye P5", "SonoEye P6", "EBit20", "EBit30", "EBit50", "EBit60", "SonoBook 6", "SonoBook 7", "SonoBook 8", "SonoBook 9", "SonoAir 20", "SonoAir 30", "SonoAir 60", "SonoAir 70", "QBit 3", "QBit 5", "QBit 7", "QBit 9", "CBit 4", "CBit 6", "CBit 8", "CBit 9", "CBit 10", "SonoPort 8", "XBit 80", "XBit90", "SonoMax 7", "SonoMax 9", "Otro / Particular"]
+                # Lista de Modelos (puedes modificarlos aquí)
+                modelos_disponibles = ["SonoBook", "Modelo Alfa", "Modelo Beta", "Modelo Gamma", "Otro / Particular"]
                 modelo = st.selectbox("Modelo del Equipo", modelos_disponibles)
                 
                 caso = st.text_area("Caso Reportado")
@@ -203,6 +206,9 @@ if division == MENU_SERV:
                         "Estatus": "Activo"
                     }])
                     conn_servicio.update(data=pd.concat([df_servicio, nuevo_registro], ignore_index=True))
+                    
+                    # Limpiamos el buscador del número de serie
+                    st.session_state['input_serie'] = ""
                     st.success("Caso registrado con éxito.")
                     st.rerun()
 
