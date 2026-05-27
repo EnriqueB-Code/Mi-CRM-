@@ -174,16 +174,18 @@ if division == MENU_SERV:
                     st.rerun()
                 st.markdown("---")
             
-            # FORMULARIO CORREGIDO CON TODOS LOS CAMPOS SOLICITADOS
+            # FORMULARIO CON MENÚ DESPLEGABLE DE MODELOS
             with st.form("nuevo_caso", clear_on_submit=True):
                 cliente = st.text_input("Cliente")
-                modelo = st.text_input("Modelo del Equipo")
-                caso = st.text_area("Caso Reportado")
                 
-                # Campos nuevos añadidos al formulario de registro inicial
+                # --- AQUÍ DEFINES TU LISTA DE MODELOS ---
+                # Puedes agregar o quitar nombres dentro de los corchetes separados por comas
+                modelos_disponibles = ["ECO 1","ECO 2", "ECO 3 EXP", "ECO 5", "ECO 6","SonoEye P1", "SonoEye P2", "SonoEye P3", "SonoEye P5", "SonoEye P6", "EBit20", "EBit30", "EBit50", "EBit60", "SonoBook 6", "SonoBook 7", "SonoBook 8", "SonoBook 9", "SonoAir 20", "SonoAir 30", "SonoAir 60", "SonoAir 70", "QBit 3", "QBit 5", "QBit 7", "QBit 9", "CBit 4", "CBit 6", "CBit 8", "CBit 9", "CBit 10", "SonoPort 8", "XBit 80", "XBit90", "SonoMax 7", "SonoMax 9", "Otro / Particular"]
+                modelo = st.selectbox("Modelo del Equipo", modelos_disponibles)
+                
+                caso = st.text_area("Caso Reportado")
                 nuevo_seg_fabrica = st.text_area("Seguimiento con Fábrica (Opcional)")
                 nueva_solucion = st.text_area("Solución del Problema (Opcional)")
-                
                 fecha_reporte = st.date_input("Fecha de Reporte")
                 
                 if st.form_submit_button("Guardar Nuevo Caso"):
