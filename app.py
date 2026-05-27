@@ -93,9 +93,7 @@ def eliminar_registro_gsheets(conexion, df_original, id_a_borrar):
     else:
         conexion.update(data=df_nuevo)
 
-# ==========================================
-# NOMBRES DE MENÚ (Para evitar errores de texto)
-# ==========================================
+# Nombres estables de menú
 MENU_SERV = "🔧 Servicio Técnico"
 MENU_MKT = "📈 Marketing"
 MENU_USR = "⚙️ Panel de Usuarios"
@@ -176,15 +174,32 @@ if division == MENU_SERV:
                     st.rerun()
                 st.markdown("---")
             
+            # FORMULARIO CORREGIDO CON TODOS LOS CAMPOS SOLICITADOS
             with st.form("nuevo_caso", clear_on_submit=True):
                 cliente = st.text_input("Cliente")
                 modelo = st.text_input("Modelo del Equipo")
                 caso = st.text_area("Caso Reportado")
+                
+                # Campos nuevos añadidos al formulario de registro inicial
+                nuevo_seg_fabrica = st.text_area("Seguimiento con Fábrica (Opcional)")
+                nueva_solucion = st.text_area("Solución del Problema (Opcional)")
+                
                 fecha_reporte = st.date_input("Fecha de Reporte")
                 
                 if st.form_submit_button("Guardar Nuevo Caso"):
                     nuevo_id = int(df_servicio['ID'].max() + 1) if not df_servicio.empty else 1
-                    nuevo_registro = pd.DataFrame([{"ID": nuevo_id, "Cliente": cliente, "Caso reportado": caso, "Modelo": modelo, "Numero de serie": num_serie_str, "Seguimiento con fabrica": "", "Solucion del problema": "", "Fecha de reporte": str(fecha_reporte), "Fecha de cierre": "", "Estatus": "Activo"}])
+                    nuevo_registro = pd.DataFrame([{
+                        "ID": nuevo_id, 
+                        "Cliente": cliente, 
+                        "Caso reportado": caso, 
+                        "Modelo": modelo, 
+                        "Numero de serie": num_serie_str, 
+                        "Seguimiento con fabrica": nuevo_seg_fabrica, 
+                        "Solucion del problema": nueva_solucion, 
+                        "Fecha de reporte": str(fecha_reporte), 
+                        "Fecha de cierre": "", 
+                        "Estatus": "Activo"
+                    }])
                     conn_servicio.update(data=pd.concat([df_servicio, nuevo_registro], ignore_index=True))
                     st.success("Caso registrado con éxito.")
                     st.rerun()
