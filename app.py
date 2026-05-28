@@ -15,6 +15,21 @@ except Exception as e:
     st.stop()
 
 # ==========================================
+# LISTA MAESTRA DE EQUIPOS
+# ==========================================
+LISTA_EQUIPOS = [
+    "SonoEye P1", "SonoEye P2", "SonoEye P3", "SonoEye P5", "SonoEye P6", 
+    "ECO1", "ECO2", "ECO3 EXP", "ECO5", "ECO6", 
+    "EBit20", "EBit30", "EBit50", "EBit60", 
+    "SonoAir20", "SonoAir30", "SonoAir60", "SonoAir70", 
+    "SonoBook6", "SonoBook7", "SonoBook8", "SonoBook9", 
+    "QBit3", "QBit5", "QBit7", "QBit9", 
+    "CBit4", "CBit6", "CBit8", "CBit9", "CBit10", 
+    "SonoPort8", "XBit80", "Xbit90", "SonoMax7", "SonoMax9", 
+    "Otro / Particular"
+]
+
+# ==========================================
 # SISTEMA DE LOGIN Y USUARIOS
 # ==========================================
 if 'logeado' not in st.session_state:
@@ -153,7 +168,8 @@ if division == MENU_SERV:
             conn_servicio.update(data=df_servicio)
 
     with st.expander("➕ Registrar o Actualizar Caso", expanded=True):
-        num_serie = st.text_input("🔍 Ingresa el Número de Serie:")
+        num_serie = st.text_input("🔍 Ingresa el Número de Serie:", key="input_serie")
+        
         if num_serie:
             num_serie_str = str(num_serie).strip()
             coincidencias = df_servicio[df_servicio['Numero de serie'] == num_serie_str]
@@ -170,18 +186,18 @@ if division == MENU_SERV:
                     df_servicio.at[idx, 'Seguimiento con fabrica'] = texto_final
                     df_servicio.at[idx, 'Estatus'] = 'Activo'
                     conn_servicio.update(data=df_servicio)
+                    
+                    st.session_state['input_serie'] = ""
                     st.success("Seguimiento guardado exitosamente.")
                     st.rerun()
                 st.markdown("---")
             
-            # FORMULARIO CON MENÚ DESPLEGABLE DE MODELOS
             with st.form("nuevo_caso", clear_on_submit=True):
                 cliente = st.text_input("Cliente")
                 
-                # --- AQUÍ DEFINES TU LISTA DE MODELOS ---
-                # Puedes agregar o quitar nombres dentro de los corchetes separados por comas
-                modelos_disponibles = ["SonoBook", "Modelo Alfa", "Modelo Beta", "Modelo Gamma", "Otro / Particular"]
-                modelo = st.selectbox("Modelo del Equipo", modelos_disponibles)
+                # Menú con Lista de Equipos y Caja para el caso "Otro"
+                modelo_seleccionado = st.selectbox("Modelo del Equipo", LISTA_EQUIPOS)
+                modelo_otro = st.text_input("Especifica el modelo (Solo si elegiste 'Otro / Particular')")
                 
                 caso = st.text_area("Caso Reportado")
                 nuevo_seg_fabrica = st.text_area("Seguimiento con Fábrica (Opcional)")
@@ -189,12 +205,18 @@ if division == MENU_SERV:
                 fecha_reporte = st.date_input("Fecha de Reporte")
                 
                 if st.form_submit_button("Guardar Nuevo Caso"):
+                    # Lógica para elegir el nombre del modelo
+                    if modelo_seleccionado == "Otro / Particular" and modelo_otro.strip() != "":
+                        modelo_final = modelo_otro.strip()
+                    else:
+                        modelo_final = modelo_seleccionado
+
                     nuevo_id = int(df_servicio['ID'].max() + 1) if not df_servicio.empty else 1
                     nuevo_registro = pd.DataFrame([{
                         "ID": nuevo_id, 
                         "Cliente": cliente, 
                         "Caso reportado": caso, 
-                        "Modelo": modelo, 
+                        "Modelo": modelo_final, 
                         "Numero de serie": num_serie_str, 
                         "Seguimiento con fabrica": nuevo_seg_fabrica, 
                         "Solucion del problema": nueva_solucion, 
@@ -203,6 +225,8 @@ if division == MENU_SERV:
                         "Estatus": "Activo"
                     }])
                     conn_servicio.update(data=pd.concat([df_servicio, nuevo_registro], ignore_index=True))
+                    
+                    st.session_state['input_serie'] = ""
                     st.success("Caso registrado con éxito.")
                     st.rerun()
 
@@ -239,10 +263,13 @@ if division == MENU_SERV:
 # ==========================================
 elif division == MENU_MKT:
     st.header("Gestión de Préstamos")
-    cols_mkt = ["ID", "KOL", "Lugar de prestamo", "Equipo", "Dias de licencia", "Fecha de inicio", "Fecha de finalizacion", "Estado"]
+    cols_mkt = ["ID", "KOL", "Lugar de prestamo", "Equipo", "Numero de serie", "Dias de licencia", "Fecha de inicio", "Fecha de finalizacion", "Estado"]
     
     df_marketing = conn_marketing.read(ttl=0)
     df_marketing = preparar_df(df_marketing, cols_mkt).fillna("")
+
+    if not df_marketing.empty and 'Numero de serie' in df_marketing.columns:
+        df_marketing['Numero de serie'] = df_marketing['Numero de serie'].apply(limpiar_serie)
 
     hoy = date.today()
     if not df_marketing.empty:
@@ -252,7 +279,7 @@ elif division == MENU_MKT:
                     fecha_fin = datetime.strptime(str(row['Fecha de finalizacion']), '%Y-%m-%d').date()
                     dias_restantes = (fecha_fin - hoy).days
                     if 0 <= dias_restantes <= 5: 
-                        st.warning(f"⚠️ **VENCIMIENTO:** '{row['Equipo']}' con '{row['KOL']}' finaliza en {dias_restantes} días.")
+                        st.warning(f"⚠️ **VENCIMIENTO:** '{row['Equipo']}' (Serie: {row.get('Numero de serie', 'N/A')}) prestado a '{row['KOL']}' finaliza en {dias_restantes} días.")
                     elif dias_restantes < 0: 
                         st.error(f"❌ **VENCIDO:** Préstamo a '{row['KOL']}' expiró hace {abs(dias_restantes)} días.")
                 except ValueError: 
@@ -262,7 +289,13 @@ elif division == MENU_MKT:
         with st.form("nuevo_prestamo", clear_on_submit=True):
             kol = st.text_input("Nombre KOL")
             lugar = st.text_input("Lugar Préstamo")
-            equipo = st.text_input("Equipo")
+            
+            # Menú con Lista de Equipos y Caja para el caso "Otro" en Marketing
+            equipo_seleccionado = st.selectbox("Equipo a Préstamo", LISTA_EQUIPOS)
+            equipo_otro = st.text_input("Especifica el equipo (Solo si elegiste 'Otro / Particular')")
+            
+            num_serie_mkt = st.text_input("Número de Serie del Equipo")
+            
             c1, c2 = st.columns(2)
             with c1: f_inicio = st.date_input("Inicio")
             with c2: f_fin = st.date_input("Finalización")
@@ -272,8 +305,24 @@ elif division == MENU_MKT:
                 if dias_lic < 0: 
                     st.error("La fecha final no puede ser menor a la inicial.")
                 else:
+                    # Lógica para elegir el nombre del equipo
+                    if equipo_seleccionado == "Otro / Particular" and equipo_otro.strip() != "":
+                        equipo_final = equipo_otro.strip()
+                    else:
+                        equipo_final = equipo_seleccionado
+
                     nuevo_id = int(df_marketing['ID'].max() + 1) if not df_marketing.empty else 1
-                    nuevo_reg = pd.DataFrame([{"ID": nuevo_id, "KOL": kol, "Lugar de prestamo": lugar, "Equipo": equipo, "Dias de licencia": dias_lic, "Fecha de inicio": str(f_inicio), "Fecha de finalizacion": str(f_fin), "Estado": "Activo"}])
+                    nuevo_reg = pd.DataFrame([{
+                        "ID": nuevo_id, 
+                        "KOL": kol, 
+                        "Lugar de prestamo": lugar, 
+                        "Equipo": equipo_final, 
+                        "Numero de serie": str(num_serie_mkt).strip(), 
+                        "Dias de licencia": dias_lic, 
+                        "Fecha de inicio": str(f_inicio), 
+                        "Fecha de finalizacion": str(f_fin), 
+                        "Estado": "Activo"
+                    }])
                     conn_marketing.update(data=pd.concat([df_marketing, nuevo_reg], ignore_index=True))
                     st.success("Préstamo registrado exitosamente.")
                     st.rerun()
