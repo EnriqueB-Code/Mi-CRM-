@@ -37,7 +37,6 @@ if 'logeado' not in st.session_state:
     st.session_state['usuario'] = ""
     st.session_state['rol'] = ""
 
-# Llave dinámica para reiniciar el buscador de series sin errores
 if 'serie_key' not in st.session_state:
     st.session_state['serie_key'] = 0
 
@@ -172,8 +171,6 @@ if division == MENU_SERV:
             conn_servicio.update(data=df_servicio)
 
     with st.expander("➕ Registrar o Actualizar Caso", expanded=True):
-        
-        # Aquí usamos la llave dinámica para evitar el StreamlitAPIException
         num_serie = st.text_input("🔍 Ingresa el Número de Serie:", key=f"buscador_serie_{st.session_state['serie_key']}")
         
         if num_serie:
@@ -193,7 +190,6 @@ if division == MENU_SERV:
                     df_servicio.at[idx, 'Estatus'] = 'Activo'
                     conn_servicio.update(data=df_servicio)
                     
-                    # Al sumar 1, Streamlit crea una caja vacía y nueva
                     st.session_state['serie_key'] += 1 
                     st.success("Seguimiento guardado exitosamente.")
                     st.rerun()
@@ -230,7 +226,6 @@ if division == MENU_SERV:
                     }])
                     conn_servicio.update(data=pd.concat([df_servicio, nuevo_registro], ignore_index=True))
                     
-                    # Al sumar 1, limpiamos el buscador sin generar error
                     st.session_state['serie_key'] += 1 
                     st.success("Caso registrado con éxito.")
                     st.rerun()
@@ -346,4 +341,40 @@ elif division == MENU_MKT:
                 st.success("Préstamo finalizado con éxito.")
                 st.rerun()
                 
-        if st.
+        if st.session_state['rol'] == 'Admin':
+            with col_del_m:
+                st.write(""); st.write("")
+                if st.button("🗑️ Borrar Préstamo"):
+                    eliminar_registro_gsheets(conn_marketing, df_marketing, id_mkt)
+                    st.success("Préstamo eliminado permanentemente de la nube.")
+                    st.rerun()
+    else:
+        st.info("No hay préstamos registrados actualmente.")
+
+# ==========================================
+# DIVISIÓN: PANEL DE USUARIOS (SOLO ADMIN)
+# ==========================================
+elif division == MENU_USR:
+    st.header("Gestión de Usuarios del Sistema")
+    st.info("Solo los administradores tienen acceso a este panel.")
+    
+    try:
+        df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
+        st.dataframe(df_usuarios, use_container_width=True)
+        
+        with st.expander("➕ Crear Nuevo Usuario", expanded=True):
+            with st.form("nuevo_usuario", clear_on_submit=True):
+                nuevo_user = st.text_input("Nombre de Usuario")
+                nuevo_pass = st.text_input("Contraseña")
+                nuevo_rol = st.selectbox("Rol", ["Usuario", "Admin"])
+                
+                if st.form_submit_button("Crear Usuario"):
+                    if nuevo_user and nuevo_pass:
+                        fila_user = pd.DataFrame([{"Usuario": str(nuevo_user).strip(), "Password": str(nuevo_pass).strip(), "Rol": str(nuevo_rol).strip()}])
+                        conn_servicio.update(worksheet="Usuarios", data=pd.concat([df_usuarios, fila_user], ignore_index=True))
+                        st.success(f"Usuario '{nuevo_user}' creado con éxito.")
+                        st.rerun()
+                    else:
+                        st.error("Por favor, llena todos los campos.")
+    except Exception as e:
+        st.error("No se pudo cargar la pestaña de Usuarios. Asegúrate de que exista en tu archivo de Excel de Servicio.")
