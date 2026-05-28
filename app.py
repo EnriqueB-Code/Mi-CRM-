@@ -30,12 +30,16 @@ LISTA_EQUIPOS = [
 ]
 
 # ==========================================
-# SISTEMA DE LOGIN Y USUARIOS
+# SISTEMA DE LOGIN Y ESTADO
 # ==========================================
 if 'logeado' not in st.session_state:
     st.session_state['logeado'] = False
     st.session_state['usuario'] = ""
     st.session_state['rol'] = ""
+
+# Llave dinámica para reiniciar el buscador de series sin errores
+if 'serie_key' not in st.session_state:
+    st.session_state['serie_key'] = 0
 
 def iniciar_sesion(usuario, password):
     try:
@@ -168,7 +172,9 @@ if division == MENU_SERV:
             conn_servicio.update(data=df_servicio)
 
     with st.expander("➕ Registrar o Actualizar Caso", expanded=True):
-        num_serie = st.text_input("🔍 Ingresa el Número de Serie:", key="input_serie")
+        
+        # Aquí usamos la llave dinámica para evitar el StreamlitAPIException
+        num_serie = st.text_input("🔍 Ingresa el Número de Serie:", key=f"buscador_serie_{st.session_state['serie_key']}")
         
         if num_serie:
             num_serie_str = str(num_serie).strip()
@@ -187,15 +193,14 @@ if division == MENU_SERV:
                     df_servicio.at[idx, 'Estatus'] = 'Activo'
                     conn_servicio.update(data=df_servicio)
                     
-                    st.session_state['input_serie'] = ""
+                    # Al sumar 1, Streamlit crea una caja vacía y nueva
+                    st.session_state['serie_key'] += 1 
                     st.success("Seguimiento guardado exitosamente.")
                     st.rerun()
                 st.markdown("---")
             
             with st.form("nuevo_caso", clear_on_submit=True):
                 cliente = st.text_input("Cliente")
-                
-                # Menú con Lista de Equipos y Caja para el caso "Otro"
                 modelo_seleccionado = st.selectbox("Modelo del Equipo", LISTA_EQUIPOS)
                 modelo_otro = st.text_input("Especifica el modelo (Solo si elegiste 'Otro / Particular')")
                 
@@ -205,7 +210,6 @@ if division == MENU_SERV:
                 fecha_reporte = st.date_input("Fecha de Reporte")
                 
                 if st.form_submit_button("Guardar Nuevo Caso"):
-                    # Lógica para elegir el nombre del modelo
                     if modelo_seleccionado == "Otro / Particular" and modelo_otro.strip() != "":
                         modelo_final = modelo_otro.strip()
                     else:
@@ -226,7 +230,8 @@ if division == MENU_SERV:
                     }])
                     conn_servicio.update(data=pd.concat([df_servicio, nuevo_registro], ignore_index=True))
                     
-                    st.session_state['input_serie'] = ""
+                    # Al sumar 1, limpiamos el buscador sin generar error
+                    st.session_state['serie_key'] += 1 
                     st.success("Caso registrado con éxito.")
                     st.rerun()
 
@@ -290,7 +295,6 @@ elif division == MENU_MKT:
             kol = st.text_input("Nombre KOL")
             lugar = st.text_input("Lugar Préstamo")
             
-            # Menú con Lista de Equipos y Caja para el caso "Otro" en Marketing
             equipo_seleccionado = st.selectbox("Equipo a Préstamo", LISTA_EQUIPOS)
             equipo_otro = st.text_input("Especifica el equipo (Solo si elegiste 'Otro / Particular')")
             
@@ -305,7 +309,6 @@ elif division == MENU_MKT:
                 if dias_lic < 0: 
                     st.error("La fecha final no puede ser menor a la inicial.")
                 else:
-                    # Lógica para elegir el nombre del equipo
                     if equipo_seleccionado == "Otro / Particular" and equipo_otro.strip() != "":
                         equipo_final = equipo_otro.strip()
                     else:
@@ -343,40 +346,4 @@ elif division == MENU_MKT:
                 st.success("Préstamo finalizado con éxito.")
                 st.rerun()
                 
-        if st.session_state['rol'] == 'Admin':
-            with col_del_m:
-                st.write(""); st.write("")
-                if st.button("🗑️ Borrar Préstamo"):
-                    eliminar_registro_gsheets(conn_marketing, df_marketing, id_mkt)
-                    st.success("Préstamo eliminado permanentemente de la nube.")
-                    st.rerun()
-    else:
-        st.info("No hay préstamos registrados actualmente.")
-
-# ==========================================
-# DIVISIÓN: PANEL DE USUARIOS (SOLO ADMIN)
-# ==========================================
-elif division == MENU_USR:
-    st.header("Gestión de Usuarios del Sistema")
-    st.info("Solo los administradores tienen acceso a este panel.")
-    
-    try:
-        df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
-        st.dataframe(df_usuarios, use_container_width=True)
-        
-        with st.expander("➕ Crear Nuevo Usuario", expanded=True):
-            with st.form("nuevo_usuario", clear_on_submit=True):
-                nuevo_user = st.text_input("Nombre de Usuario")
-                nuevo_pass = st.text_input("Contraseña")
-                nuevo_rol = st.selectbox("Rol", ["Usuario", "Admin"])
-                
-                if st.form_submit_button("Crear Usuario"):
-                    if nuevo_user and nuevo_pass:
-                        fila_user = pd.DataFrame([{"Usuario": str(nuevo_user).strip(), "Password": str(nuevo_pass).strip(), "Rol": str(nuevo_rol).strip()}])
-                        conn_servicio.update(worksheet="Usuarios", data=pd.concat([df_usuarios, fila_user], ignore_index=True))
-                        st.success(f"Usuario '{nuevo_user}' creado con éxito.")
-                        st.rerun()
-                    else:
-                        st.error("Por favor, llena todos los campos.")
-    except Exception as e:
-        st.error("No se pudo cargar la pestaña de Usuarios. Asegúrate de que exista en tu archivo de Excel de Servicio.")
+        if st.
