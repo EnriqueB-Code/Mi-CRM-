@@ -42,10 +42,9 @@ if 'serie_key' not in st.session_state:
 
 def iniciar_sesion(usuario, password):
     try:
-        # Aumentamos el ttl a 5 para evitar errores en el login
-        df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=5).dropna(how='all')
+        df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
     except Exception:
-        st.error("⚠️ No se encontró la pestaña 'Usuarios' o Google Sheets está saturado. Intenta en un minuto.")
+        st.error("⚠️ No se encontró la pestaña 'Usuarios' en tu Excel de Servicio Técnico.")
         return
         
     df_usuarios['Usuario'] = df_usuarios['Usuario'].astype(str).str.strip()
@@ -148,13 +147,8 @@ if division == MENU_SERV:
     st.header("Gestión de Servicio")
     cols_servicio = ["ID", "Cliente", "Caso reportado", "Modelo", "Numero de serie", "Seguimiento con fabrica", "Solucion del problema", "Fecha de reporte", "Fecha de cierre", "Estatus"]
     
-    try:
-        # Aumentamos el ttl a 5 segundos para proteger la app
-        df_servicio = conn_servicio.read(ttl=5)
-        df_servicio = preparar_df(df_servicio, cols_servicio).fillna("")
-    except Exception as e:
-        st.warning("⏳ Google Sheets está procesando demasiadas peticiones. Espera un minuto y recarga la página.")
-        df_servicio = pd.DataFrame(columns=cols_servicio)
+    df_servicio = conn_servicio.read(ttl=0)
+    df_servicio = preparar_df(df_servicio, cols_servicio).fillna("")
     
     if not df_servicio.empty:
         df_servicio['Numero de serie'] = df_servicio['Numero de serie'].apply(limpiar_serie)
@@ -180,10 +174,7 @@ if division == MENU_SERV:
                 except ValueError: 
                     pass
         if hubo_cambios: 
-            try:
-                conn_servicio.update(data=df_servicio)
-            except:
-                st.toast("La actualización de fondo se pausó por saturación de la API. Se intentará luego.")
+            conn_servicio.update(data=df_servicio)
 
     with st.expander("➕ Registrar o Actualizar Caso", expanded=True):
         num_serie = st.text_input("🔍 Ingresa el Número de Serie:", key=f"buscador_serie_{st.session_state['serie_key']}")
@@ -257,4 +248,209 @@ if division == MENU_SERV:
             st.write(""); st.write("")
             if st.button("✅ Finalizar Caso"):
                 idx = df_servicio.index[df_servicio['ID'] == id_gestion].tolist()[0]
-                df_servicio.at[idx,
+                df_servicio.at[idx, 'Estatus'] = 'Finalizado'
+                df_servicio.at[idx, 'Fecha de cierre'] = str(hoy)
+                conn_servicio.update(data=df_servicio)
+                st.success("Caso finalizado con éxito.")
+                st.rerun()
+                
+        if st.session_state['rol'] == 'Admin':
+            with col_del:
+                st.write(""); st.write("")
+                if st.button("🗑️ Borrar Caso"):
+                    eliminar_registro_gsheets(conn_servicio, df_servicio, id_gestion)
+                    st.success("Caso eliminado permanentemente de la nube.")
+                    st.rerun()
+    else:
+        st.info("No hay casos registrados actualmente.")
+
+# ==========================================
+# DIVISIÓN: MARKETING
+# ==========================================
+elif division == MENU_MKT:
+    st.header("Gestión de Préstamos")
+    cols_mkt = ["ID", "KOL", "Lugar de prestamo", "Equipo", "Numero de serie", "Dias de licencia", "Vencimiento Licencia", "Fecha de inicio", "Fecha de finalizacion", "Estado"]
+    
+    df_marketing = conn_marketing.read(ttl=0)
+    df_marketing = preparar_df(df_marketing, cols_mkt).fillna("")
+
+    if not df_marketing.empty:
+        if 'Numero de serie' in df_marketing.columns:
+            df_marketing['Numero de serie'] = df_marketing['Numero de serie'].apply(limpiar_serie)
+        if 'Dias de licencia' in df_marketing.columns:
+            df_marketing['Dias de licencia'] = df_marketing['Dias de licencia'].apply(limpiar_decimales)
+
+    hoy = date.today()
+    hubo_cambios_mkt = False
+    
+    if not df_marketing.empty:
+        for index, row in df_marketing.iterrows():
+            if str(row['Estado']) != 'Finalizado':
+                
+                # 1. Verificar la fecha en que deben devolver el equipo físicamente
+                if str(row['Fecha de finalizacion']).strip() != "":
+                    try:
+                        fecha_retorno = datetime.strptime(str(row['Fecha de finalizacion']), '%Y-%m-%d').date()
+                        dias_retorno = (fecha_retorno - hoy).days
+                        if 0 <= dias_retorno <= 5: 
+                            st.warning(f"📦 **DEVOLUCIÓN PRÓXIMA:** El equipo '{row['Equipo']}' prestado a '{row['KOL']}' debe devolverse en {dias_retorno} días.")
+                        elif dias_retorno < 0: 
+                            st.error(f"❌ **DEVOLUCIÓN VENCIDA:** El préstamo de '{row['KOL']}' debió devolverse hace {abs(dias_retorno)} días.")
+                    except ValueError: 
+                        pass
+
+                # 2. Verificar los días restantes de la Licencia (Software)
+                if str(row['Vencimiento Licencia']).strip() != "":
+                    try:
+                        venc_licencia = datetime.strptime(str(row['Vencimiento Licencia']), '%Y-%m-%d').date()
+                        dias_lic_restantes = (venc_licencia - hoy).days
+                        
+                        if str(row['Dias de licencia']) != str(dias_lic_restantes):
+                            df_marketing.at[index, 'Dias de licencia'] = str(dias_lic_restantes)
+                            hubo_cambios_mkt = True
+
+                        if 0 <= dias_lic_restantes <= 5: 
+                            st.warning(f"🔑 **LICENCIA POR VENCER:** La contraseña del equipo '{row['Equipo']}' de '{row['KOL']}' caduca en {dias_lic_restantes} días.")
+                        elif dias_lic_restantes < 0: 
+                            st.error(f"🚫 **LICENCIA CADUCADA:** La contraseña de '{row['Equipo']}' de '{row['KOL']}' se venció hace {abs(dias_lic_restantes)} días.")
+                    except ValueError: 
+                        pass
+                
+                elif str(row['Dias de licencia']).strip() != "":
+                    try:
+                        dias_estimados = int(float(row['Dias de licencia']))
+                        fecha_estimada = hoy + timedelta(days=dias_estimados)
+                        df_marketing.at[index, 'Vencimiento Licencia'] = str(fecha_estimada)
+                        hubo_cambios_mkt = True
+                    except:
+                        pass
+                    
+        if hubo_cambios_mkt:
+            conn_marketing.update(data=df_marketing)
+
+    with st.expander("➕ Registrar Préstamo", expanded=True):
+        with st.form("nuevo_prestamo", clear_on_submit=True):
+            kol = st.text_input("Nombre KOL")
+            lugar = st.text_input("Lugar Préstamo")
+            
+            equipo_seleccionado = st.selectbox("Equipo a Préstamo", LISTA_EQUIPOS)
+            equipo_otro = st.text_input("Especifica el equipo (Solo si elegiste 'Otro / Particular')")
+            num_serie_mkt = st.text_input("Número de Serie del Equipo")
+            
+            # Fechas y Días separados
+            col1, col2, col3 = st.columns(3)
+            with col1: 
+                f_inicio = st.date_input("Fecha de Inicio")
+            with col2: 
+                f_fin = st.date_input("Fecha de Devolución FÍSICA")
+            with col3:
+                # CAMBIO APLICADO: value=1 en lugar de 12
+                dias_otorgados = st.number_input("Días de Licencia (Contraseña)", min_value=1, step=1, value=1)
+            
+            if st.form_submit_button("Guardar Préstamo"):
+                if f_fin < f_inicio: 
+                    st.error("La fecha de devolución no puede ser menor a la fecha de inicio.")
+                else:
+                    if equipo_seleccionado == "Otro / Particular" and equipo_otro.strip() != "":
+                        equipo_final = equipo_otro.strip()
+                    else:
+                        equipo_final = equipo_seleccionado
+
+                    vencimiento_licencia = f_inicio + timedelta(days=dias_otorgados)
+
+                    nuevo_id = int(df_marketing['ID'].max() + 1) if not df_marketing.empty else 1
+                    nuevo_reg = pd.DataFrame([{
+                        "ID": nuevo_id, 
+                        "KOL": kol, 
+                        "Lugar de prestamo": lugar, 
+                        "Equipo": equipo_final, 
+                        "Numero de serie": str(num_serie_mkt).strip(), 
+                        "Dias de licencia": str((vencimiento_licencia - hoy).days), 
+                        "Vencimiento Licencia": str(vencimiento_licencia),
+                        "Fecha de inicio": str(f_inicio), 
+                        "Fecha de finalizacion": str(f_fin), 
+                        "Estado": "Activo"
+                    }])
+                    conn_marketing.update(data=pd.concat([df_marketing, nuevo_reg], ignore_index=True))
+                    st.success("Préstamo registrado exitosamente.")
+                    st.rerun()
+
+    st.subheader("Equipos en Préstamo")
+    if not df_marketing.empty:
+        columnas_visibles = [c for c in df_marketing.columns if c != "Vencimiento Licencia"]
+        st.dataframe(df_marketing[columnas_visibles].style.apply(color_filas, axis=1), use_container_width=True)
+        
+        st.write("### ⚙️ Gestionar Préstamos y Licencias")
+        
+        col_sel_m, col_renovar, col_fin_m, col_del_m = st.columns([2, 1.5, 1, 1])
+        
+        with col_sel_m:
+            id_mkt = st.selectbox("Selecciona ID:", df_marketing['ID'].unique(), key="gest_mkt")
+            
+        with col_renovar:
+            # CAMBIO APLICADO: Formulario agregado para evitar límite de peticiones (APIError) y valor inicial a 1
+            with st.form("form_renovar_licencia", clear_on_submit=True):
+                dias_extra = st.number_input("Días de contraseña extra", min_value=1, step=1, value=1)
+                
+                if st.form_submit_button("🔑 Sumar Días a Licencia"):
+                    idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
+                    
+                    try:
+                        venc_actual = datetime.strptime(str(df_marketing.at[idx, 'Vencimiento Licencia']), '%Y-%m-%d').date()
+                    except:
+                        venc_actual = hoy
+                        
+                    nuevo_venc = venc_actual + timedelta(days=dias_extra)
+                    df_marketing.at[idx, 'Vencimiento Licencia'] = str(nuevo_venc)
+                    df_marketing.at[idx, 'Dias de licencia'] = str((nuevo_venc - hoy).days)
+                    
+                    conn_marketing.update(data=df_marketing)
+                    st.success(f"Se han agregado {dias_extra} días a la licencia.")
+                    st.rerun()
+                
+        with col_fin_m:
+            st.write(""); st.write("")
+            if st.button("✅ Finalizar Préstamo"):
+                idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
+                df_marketing.at[idx, 'Estado'] = 'Finalizado'
+                conn_marketing.update(data=df_marketing)
+                st.success("Préstamo finalizado con éxito.")
+                st.rerun()
+                
+        if st.session_state['rol'] == 'Admin':
+            with col_del_m:
+                st.write(""); st.write("")
+                if st.button("🗑️ Borrar Préstamo"):
+                    eliminar_registro_gsheets(conn_marketing, df_marketing, id_mkt)
+                    st.success("Préstamo eliminado permanentemente de la nube.")
+                    st.rerun()
+    else:
+        st.info("No hay préstamos registrados actualmente.")
+
+# ==========================================
+# DIVISIÓN: PANEL DE USUARIOS (SOLO ADMIN)
+# ==========================================
+elif division == MENU_USR:
+    st.header("Gestión de Usuarios del Sistema")
+    st.info("Solo los administradores tienen acceso a este panel.")
+    
+    try:
+        df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
+        st.dataframe(df_usuarios, use_container_width=True)
+        
+        with st.expander("➕ Crear Nuevo Usuario", expanded=True):
+            with st.form("nuevo_usuario", clear_on_submit=True):
+                nuevo_user = st.text_input("Nombre de Usuario")
+                nuevo_pass = st.text_input("Contraseña")
+                nuevo_rol = st.selectbox("Rol", ["Usuario", "Admin"])
+                
+                if st.form_submit_button("Crear Usuario"):
+                    if nuevo_user and nuevo_pass:
+                        fila_user = pd.DataFrame([{"Usuario": str(nuevo_user).strip(), "Password": str(nuevo_pass).strip(), "Rol": str(nuevo_rol).strip()}])
+                        conn_servicio.update(worksheet="Usuarios", data=pd.concat([df_usuarios, fila_user], ignore_index=True))
+                        st.success(f"Usuario '{nuevo_user}' creado con éxito.")
+                        st.rerun()
+                    else:
+                        st.error("Por favor, llena todos los campos.")
+    except Exception as e:
+        st.error("No se pudo cargar la pestaña de Usuarios. Asegúrate de que exista en tu archivo de Excel de Servicio.")
