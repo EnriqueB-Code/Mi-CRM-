@@ -238,7 +238,6 @@ if division == MENU_SERV:
 
     st.subheader("Casos Registrados")
     if not df_servicio.empty:
-        # AQUÍ SE AGREGA hide_index=True
         st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         st.write("### ⚙️ Gestionar Casos")
         
@@ -301,6 +300,7 @@ elif division == MENU_MKT:
                         pass
 
                 # 2. Verificar los días restantes de la Licencia (Software)
+                # Ahora esto no se ejecutará si "Vencimiento Licencia" está vacío (equipos particulares)
                 if str(row['Vencimiento Licencia']).strip() != "":
                     try:
                         venc_licencia = datetime.strptime(str(row['Vencimiento Licencia']), '%Y-%m-%d').date()
@@ -317,6 +317,7 @@ elif division == MENU_MKT:
                     except ValueError: 
                         pass
                 
+                # Respaldo por si hay datos viejos
                 elif str(row['Dias de licencia']).strip() != "":
                     try:
                         dias_estimados = int(float(row['Dias de licencia']))
@@ -347,6 +348,8 @@ elif division == MENU_MKT:
             with col3:
                 dias_otorgados = st.number_input("Días de Licencia (Contraseña)", min_value=1, step=1, value=1)
             
+            st.caption("💡 *Nota: Si seleccionas 'Otro / Particular', los días de licencia no se tomarán en cuenta.*")
+            
             if st.form_submit_button("Guardar Préstamo"):
                 if f_fin < f_inicio: 
                     st.error("La fecha de devolución no puede ser menor a la fecha de inicio.")
@@ -356,7 +359,14 @@ elif division == MENU_MKT:
                     else:
                         equipo_final = equipo_seleccionado
 
-                    vencimiento_licencia = f_inicio + timedelta(days=dias_otorgados)
+                    # NUEVA LÓGICA: Si es "Otro / Particular", los campos de licencia van vacíos
+                    if equipo_seleccionado == "Otro / Particular":
+                        vencimiento_licencia_str = ""
+                        dias_licencia_str = ""
+                    else:
+                        vencimiento_licencia = f_inicio + timedelta(days=dias_otorgados)
+                        vencimiento_licencia_str = str(vencimiento_licencia)
+                        dias_licencia_str = str((vencimiento_licencia - hoy).days)
 
                     nuevo_id = int(df_marketing['ID'].max() + 1) if not df_marketing.empty else 1
                     nuevo_reg = pd.DataFrame([{
@@ -365,8 +375,8 @@ elif division == MENU_MKT:
                         "Lugar de prestamo": lugar, 
                         "Equipo": equipo_final, 
                         "Numero de serie": str(num_serie_mkt).strip(), 
-                        "Dias de licencia": str((vencimiento_licencia - hoy).days), 
-                        "Vencimiento Licencia": str(vencimiento_licencia),
+                        "Dias de licencia": dias_licencia_str, 
+                        "Vencimiento Licencia": vencimiento_licencia_str,
                         "Fecha de inicio": str(f_inicio), 
                         "Fecha de finalizacion": str(f_fin), 
                         "Estado": "Activo"
@@ -378,7 +388,6 @@ elif division == MENU_MKT:
     st.subheader("Equipos en Préstamo")
     if not df_marketing.empty:
         columnas_visibles = [c for c in df_marketing.columns if c != "Vencimiento Licencia"]
-        # AQUÍ SE AGREGA hide_index=True
         st.dataframe(df_marketing[columnas_visibles].style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
         st.write("### ⚙️ Gestionar Préstamos y Licencias")
@@ -395,18 +404,22 @@ elif division == MENU_MKT:
                 if st.form_submit_button("🔑 Sumar Días a Licencia"):
                     idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
                     
-                    try:
-                        venc_actual = datetime.strptime(str(df_marketing.at[idx, 'Vencimiento Licencia']), '%Y-%m-%d').date()
-                    except:
-                        venc_actual = hoy
+                    # Candado: Validar si este equipo no maneja licencia
+                    if str(df_marketing.at[idx, 'Vencimiento Licencia']).strip() == "" and str(df_marketing.at[idx, 'Dias de licencia']).strip() == "":
+                        st.warning("⚠️ Este equipo fue registrado como 'Otro / Particular' y no maneja fechas de licencia de software.")
+                    else:
+                        try:
+                            venc_actual = datetime.strptime(str(df_marketing.at[idx, 'Vencimiento Licencia']), '%Y-%m-%d').date()
+                        except:
+                            venc_actual = hoy
+                            
+                        nuevo_venc = venc_actual + timedelta(days=dias_extra)
+                        df_marketing.at[idx, 'Vencimiento Licencia'] = str(nuevo_venc)
+                        df_marketing.at[idx, 'Dias de licencia'] = str((nuevo_venc - hoy).days)
                         
-                    nuevo_venc = venc_actual + timedelta(days=dias_extra)
-                    df_marketing.at[idx, 'Vencimiento Licencia'] = str(nuevo_venc)
-                    df_marketing.at[idx, 'Dias de licencia'] = str((nuevo_venc - hoy).days)
-                    
-                    conn_marketing.update(data=df_marketing)
-                    st.success(f"Se han agregado {dias_extra} días a la licencia.")
-                    st.rerun()
+                        conn_marketing.update(data=df_marketing)
+                        st.success(f"Se han agregado {dias_extra} días a la licencia.")
+                        st.rerun()
 
         with col_renovar_dev:
             with st.form("form_renovar_devolucion", clear_on_submit=True):
@@ -455,7 +468,6 @@ elif division == MENU_USR:
     
     try:
         df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
-        # AQUÍ SE AGREGA hide_index=True
         st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
         
         with st.expander("➕ Crear Nuevo Usuario", expanded=True):
