@@ -42,9 +42,10 @@ if 'serie_key' not in st.session_state:
 
 def iniciar_sesion(usuario, password):
     try:
-        df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
+        # Aumentamos el ttl a 5 para evitar errores en el login
+        df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=5).dropna(how='all')
     except Exception:
-        st.error("⚠️ No se encontró la pestaña 'Usuarios' en tu Excel de Servicio Técnico.")
+        st.error("⚠️ No se encontró la pestaña 'Usuarios' o Google Sheets está saturado. Intenta en un minuto.")
         return
         
     df_usuarios['Usuario'] = df_usuarios['Usuario'].astype(str).str.strip()
@@ -147,8 +148,13 @@ if division == MENU_SERV:
     st.header("Gestión de Servicio")
     cols_servicio = ["ID", "Cliente", "Caso reportado", "Modelo", "Numero de serie", "Seguimiento con fabrica", "Solucion del problema", "Fecha de reporte", "Fecha de cierre", "Estatus"]
     
-    df_servicio = conn_servicio.read(ttl=0)
-    df_servicio = preparar_df(df_servicio, cols_servicio).fillna("")
+    try:
+        # Aumentamos el ttl a 5 segundos para proteger la app
+        df_servicio = conn_servicio.read(ttl=5)
+        df_servicio = preparar_df(df_servicio, cols_servicio).fillna("")
+    except Exception as e:
+        st.warning("⏳ Google Sheets está procesando demasiadas peticiones. Espera un minuto y recarga la página.")
+        df_servicio = pd.DataFrame(columns=cols_servicio)
     
     if not df_servicio.empty:
         df_servicio['Numero de serie'] = df_servicio['Numero de serie'].apply(limpiar_serie)
@@ -174,7 +180,10 @@ if division == MENU_SERV:
                 except ValueError: 
                     pass
         if hubo_cambios: 
-            conn_servicio.update(data=df_servicio)
+            try:
+                conn_servicio.update(data=df_servicio)
+            except:
+                st.toast("La actualización de fondo se pausó por saturación de la API. Se intentará luego.")
 
     with st.expander("➕ Registrar o Actualizar Caso", expanded=True):
         num_serie = st.text_input("🔍 Ingresa el Número de Serie:", key=f"buscador_serie_{st.session_state['serie_key']}")
@@ -248,32 +257,4 @@ if division == MENU_SERV:
             st.write(""); st.write("")
             if st.button("✅ Finalizar Caso"):
                 idx = df_servicio.index[df_servicio['ID'] == id_gestion].tolist()[0]
-                df_servicio.at[idx, 'Estatus'] = 'Finalizado'
-                df_servicio.at[idx, 'Fecha de cierre'] = str(hoy)
-                conn_servicio.update(data=df_servicio)
-                st.success("Caso finalizado con éxito.")
-                st.rerun()
-                
-        if st.session_state['rol'] == 'Admin':
-            with col_del:
-                st.write(""); st.write("")
-                if st.button("🗑️ Borrar Caso"):
-                    eliminar_registro_gsheets(conn_servicio, df_servicio, id_gestion)
-                    st.success("Caso eliminado permanentemente de la nube.")
-                    st.rerun()
-    else:
-        st.info("No hay casos registrados actualmente.")
-
-# ==========================================
-# DIVISIÓN: MARKETING
-# ==========================================
-elif division == MENU_MKT:
-    st.header("Gestión de Préstamos")
-    cols_mkt = ["ID", "KOL", "Lugar de prestamo", "Equipo", "Numero de serie", "Dias de licencia", "Vencimiento Licencia", "Fecha de inicio", "Fecha de finalizacion", "Estado"]
-    
-    df_marketing = conn_marketing.read(ttl=0)
-    df_marketing = preparar_df(df_marketing, cols_mkt).fillna("")
-
-    if not df_marketing.empty:
-        if 'Numero de serie' in df_marketing.columns:
-            df_marketing
+                df_servicio.at[idx,
