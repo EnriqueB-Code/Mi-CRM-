@@ -269,7 +269,6 @@ if division == MENU_SERV:
 # ==========================================
 elif division == MENU_MKT:
     st.header("Gestión de Préstamos")
-    # Se agrega "Vencimiento Licencia" a las columnas para manejar la lógica interna
     cols_mkt = ["ID", "KOL", "Lugar de prestamo", "Equipo", "Numero de serie", "Dias de licencia", "Vencimiento Licencia", "Fecha de inicio", "Fecha de finalizacion", "Estado"]
     
     df_marketing = conn_marketing.read(ttl=0)
@@ -284,7 +283,6 @@ elif division == MENU_MKT:
     hoy = date.today()
     hubo_cambios_mkt = False
     
-    # ALERTAS Y CÁLCULOS DINÁMICOS AL ABRIR LA APP
     if not df_marketing.empty:
         for index, row in df_marketing.iterrows():
             if str(row['Estado']) != 'Finalizado':
@@ -307,7 +305,6 @@ elif division == MENU_MKT:
                         venc_licencia = datetime.strptime(str(row['Vencimiento Licencia']), '%Y-%m-%d').date()
                         dias_lic_restantes = (venc_licencia - hoy).days
                         
-                        # Actualiza la tabla visual si cambió el día
                         if str(row['Dias de licencia']) != str(dias_lic_restantes):
                             df_marketing.at[index, 'Dias de licencia'] = str(dias_lic_restantes)
                             hubo_cambios_mkt = True
@@ -319,7 +316,6 @@ elif division == MENU_MKT:
                     except ValueError: 
                         pass
                 
-                # Respaldo por si hay registros viejos sin fecha de vencimiento
                 elif str(row['Dias de licencia']).strip() != "":
                     try:
                         dias_estimados = int(float(row['Dias de licencia']))
@@ -348,7 +344,8 @@ elif division == MENU_MKT:
             with col2: 
                 f_fin = st.date_input("Fecha de Devolución FÍSICA")
             with col3:
-                dias_otorgados = st.number_input("Días de Licencia (Contraseña)", min_value=1, step=1, value=12)
+                # CAMBIO APLICADO: value=1 en lugar de 12
+                dias_otorgados = st.number_input("Días de Licencia (Contraseña)", min_value=1, step=1, value=1)
             
             if st.form_submit_button("Guardar Préstamo"):
                 if f_fin < f_inicio: 
@@ -359,7 +356,6 @@ elif division == MENU_MKT:
                     else:
                         equipo_final = equipo_seleccionado
 
-                    # Se calcula internamente cuando caduca la contraseña
                     vencimiento_licencia = f_inicio + timedelta(days=dias_otorgados)
 
                     nuevo_id = int(df_marketing['ID'].max() + 1) if not df_marketing.empty else 1
@@ -381,7 +377,6 @@ elif division == MENU_MKT:
 
     st.subheader("Equipos en Préstamo")
     if not df_marketing.empty:
-        # Se oculta la columna técnica de "Vencimiento Licencia" para que la tabla se vea limpia
         columnas_visibles = [c for c in df_marketing.columns if c != "Vencimiento Licencia"]
         st.dataframe(df_marketing[columnas_visibles].style.apply(color_filas, axis=1), use_container_width=True)
         
@@ -393,23 +388,25 @@ elif division == MENU_MKT:
             id_mkt = st.selectbox("Selecciona ID:", df_marketing['ID'].unique(), key="gest_mkt")
             
         with col_renovar:
-            dias_extra = st.number_input("Días de contraseña extra", min_value=1, step=1, value=30)
-            if st.button("🔑 Sumar Días a Licencia"):
-                idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
+            # CAMBIO APLICADO: Formulario agregado para evitar límite de peticiones (APIError) y valor inicial a 1
+            with st.form("form_renovar_licencia", clear_on_submit=True):
+                dias_extra = st.number_input("Días de contraseña extra", min_value=1, step=1, value=1)
                 
-                # Se actualiza ÚNICAMENTE la vigencia de la licencia, no la de devolución física
-                try:
-                    venc_actual = datetime.strptime(str(df_marketing.at[idx, 'Vencimiento Licencia']), '%Y-%m-%d').date()
-                except:
-                    venc_actual = hoy
+                if st.form_submit_button("🔑 Sumar Días a Licencia"):
+                    idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
                     
-                nuevo_venc = venc_actual + timedelta(days=dias_extra)
-                df_marketing.at[idx, 'Vencimiento Licencia'] = str(nuevo_venc)
-                df_marketing.at[idx, 'Dias de licencia'] = str((nuevo_venc - hoy).days)
-                
-                conn_marketing.update(data=df_marketing)
-                st.success(f"Se han agregado {dias_extra} días a la licencia.")
-                st.rerun()
+                    try:
+                        venc_actual = datetime.strptime(str(df_marketing.at[idx, 'Vencimiento Licencia']), '%Y-%m-%d').date()
+                    except:
+                        venc_actual = hoy
+                        
+                    nuevo_venc = venc_actual + timedelta(days=dias_extra)
+                    df_marketing.at[idx, 'Vencimiento Licencia'] = str(nuevo_venc)
+                    df_marketing.at[idx, 'Dias de licencia'] = str((nuevo_venc - hoy).days)
+                    
+                    conn_marketing.update(data=df_marketing)
+                    st.success(f"Se han agregado {dias_extra} días a la licencia.")
+                    st.rerun()
                 
         with col_fin_m:
             st.write(""); st.write("")
