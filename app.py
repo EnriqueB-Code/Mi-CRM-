@@ -344,7 +344,6 @@ elif division == MENU_MKT:
             with col2: 
                 f_fin = st.date_input("Fecha de Devolución FÍSICA")
             with col3:
-                # CAMBIO APLICADO: value=1 en lugar de 12
                 dias_otorgados = st.number_input("Días de Licencia (Contraseña)", min_value=1, step=1, value=1)
             
             if st.form_submit_button("Guardar Préstamo"):
@@ -382,13 +381,14 @@ elif division == MENU_MKT:
         
         st.write("### ⚙️ Gestionar Préstamos y Licencias")
         
-        col_sel_m, col_renovar, col_fin_m, col_del_m = st.columns([2, 1.5, 1, 1])
+        # CAMBIO: Ajustamos a 5 columnas para dar espacio al nuevo botón
+        col_sel_m, col_renovar_lic, col_renovar_dev, col_fin_m, col_del_m = st.columns([1.5, 1.5, 1.5, 1, 1])
         
         with col_sel_m:
             id_mkt = st.selectbox("Selecciona ID:", df_marketing['ID'].unique(), key="gest_mkt")
             
-        with col_renovar:
-            # CAMBIO APLICADO: Formulario agregado para evitar límite de peticiones (APIError) y valor inicial a 1
+        with col_renovar_lic:
+            # Formulario para LICENCIA
             with st.form("form_renovar_licencia", clear_on_submit=True):
                 dias_extra = st.number_input("Días de contraseña extra", min_value=1, step=1, value=1)
                 
@@ -406,6 +406,26 @@ elif division == MENU_MKT:
                     
                     conn_marketing.update(data=df_marketing)
                     st.success(f"Se han agregado {dias_extra} días a la licencia.")
+                    st.rerun()
+
+        with col_renovar_dev:
+            # NUEVO: Formulario para DEVOLUCIÓN FÍSICA
+            with st.form("form_renovar_devolucion", clear_on_submit=True):
+                dias_extra_dev = st.number_input("Días de préstamo extra", min_value=1, step=1, value=1)
+                
+                if st.form_submit_button("📦 Sumar Días a Devolución"):
+                    idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
+                    
+                    try:
+                        fecha_dev_actual = datetime.strptime(str(df_marketing.at[idx, 'Fecha de finalizacion']), '%Y-%m-%d').date()
+                    except:
+                        fecha_dev_actual = hoy
+                        
+                    nueva_fecha_dev = fecha_dev_actual + timedelta(days=dias_extra_dev)
+                    df_marketing.at[idx, 'Fecha de finalizacion'] = str(nueva_fecha_dev)
+                    
+                    conn_marketing.update(data=df_marketing)
+                    st.success(f"Se han agregado {dias_extra_dev} días a la fecha de devolución.")
                     st.rerun()
                 
         with col_fin_m:
