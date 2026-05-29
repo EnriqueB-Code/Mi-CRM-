@@ -238,7 +238,8 @@ if division == MENU_SERV:
 
     st.subheader("Casos Registrados")
     if not df_servicio.empty:
-        st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True)
+        # AQUÍ SE AGREGA hide_index=True
+        st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         st.write("### ⚙️ Gestionar Casos")
         
         col_sel, col_fin, col_del = st.columns([2, 1, 1])
@@ -377,18 +378,17 @@ elif division == MENU_MKT:
     st.subheader("Equipos en Préstamo")
     if not df_marketing.empty:
         columnas_visibles = [c for c in df_marketing.columns if c != "Vencimiento Licencia"]
-        st.dataframe(df_marketing[columnas_visibles].style.apply(color_filas, axis=1), use_container_width=True)
+        # AQUÍ SE AGREGA hide_index=True
+        st.dataframe(df_marketing[columnas_visibles].style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
         st.write("### ⚙️ Gestionar Préstamos y Licencias")
         
-        # CAMBIO: Ajustamos a 5 columnas para dar espacio al nuevo botón
         col_sel_m, col_renovar_lic, col_renovar_dev, col_fin_m, col_del_m = st.columns([1.5, 1.5, 1.5, 1, 1])
         
         with col_sel_m:
             id_mkt = st.selectbox("Selecciona ID:", df_marketing['ID'].unique(), key="gest_mkt")
             
         with col_renovar_lic:
-            # Formulario para LICENCIA
             with st.form("form_renovar_licencia", clear_on_submit=True):
                 dias_extra = st.number_input("Días de contraseña extra", min_value=1, step=1, value=1)
                 
@@ -409,7 +409,6 @@ elif division == MENU_MKT:
                     st.rerun()
 
         with col_renovar_dev:
-            # NUEVO: Formulario para DEVOLUCIÓN FÍSICA
             with st.form("form_renovar_devolucion", clear_on_submit=True):
                 dias_extra_dev = st.number_input("Días de préstamo extra", min_value=1, step=1, value=1)
                 
@@ -456,7 +455,8 @@ elif division == MENU_USR:
     
     try:
         df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
-        st.dataframe(df_usuarios, use_container_width=True)
+        # AQUÍ SE AGREGA hide_index=True
+        st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
         
         with st.expander("➕ Crear Nuevo Usuario", expanded=True):
             with st.form("nuevo_usuario", clear_on_submit=True):
