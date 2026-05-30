@@ -170,7 +170,8 @@ def registrar_auditoria(cambios):
 MENU_SERV = "🔧 Servicio Técnico"
 MENU_MKT = "📈 Marketing"
 MENU_EVE = "📅 Calendario de Eventos"
-MENU_INV = "📦 Inventario"
+MENU_INV = "📦 Inventario de Refacciones"
+MENU_DEMO = "💻 Equipos Demo"
 MENU_USR = "⚙️ Panel de Usuarios"
 
 # ==========================================
@@ -183,7 +184,7 @@ if st.sidebar.button("Cerrar Sesión"):
     st.rerun()
 
 st.sidebar.markdown("---")
-opciones_menu = [MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV]
+opciones_menu = [MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO]
 
 if st.session_state['rol'] == 'Admin':
     opciones_menu.append(MENU_USR)
@@ -191,7 +192,7 @@ if st.session_state['rol'] == 'Admin':
 division = st.sidebar.radio("Selecciona la División:", opciones_menu)
 st.title("Panel de Control Sincronizado")
 
-# VARIABLE GLOBAL DE FECHA PARA TODO EL SISTEMA (Corrige el NameError)
+# VARIABLE GLOBAL DE FECHA
 hoy = date.today()
 
 # ==========================================
@@ -604,10 +605,10 @@ elif division == MENU_EVE:
         st.info("No hay eventos registrados.")
 
 # ==========================================
-# DIVISIÓN: INVENTARIO
+# DIVISIÓN: INVENTARIO DE REFACCIONES
 # ==========================================
 elif division == MENU_INV:
-    st.header("📦 Control de Inventario")
+    st.header("📦 Control de Inventario de Refacciones")
     tab_nuevas, tab_danadas = st.tabs(["✨ Piezas Nuevas", "🛠️ Piezas Dañadas"])
     
     # --- PIEZAS NUEVAS ---
@@ -647,7 +648,6 @@ elif division == MENU_INV:
                     
         if not df_nuevas.empty:
             st.dataframe(df_nuevas, use_container_width=True, hide_index=True)
-            
             st.write("### ⚙️ Gestionar Piezas Nuevas")
             
             with st.expander("✏️ Editar Pieza Nueva"):
@@ -664,7 +664,7 @@ elif division == MENU_INV:
                             val_date = str(df_nuevas.at[idx_n, 'Receive']).strip()
                             e_rec = datetime.strptime(val_date, '%Y-%m-%d').date()
                         except:
-                            e_rec = hoy # <--- LA VARIABLE GLOBAL "HOY" SE USA AQUÍ SIN PROBLEMA
+                            e_rec = hoy
                         
                         e_receive = st.date_input("Receive", value=e_rec)
                         e_status = st.text_input("Status", value=df_nuevas.at[idx_n, 'Status'])
@@ -719,10 +719,8 @@ elif division == MENU_INV:
                 with c2:
                     ou_d = st.text_input("Origin Unit (Equipo de origen)")
                     ou_sn_d = st.text_input("Origin Unit SN (Serie equipo origen)")
-                    
                     status_d = st.selectbox("Status", LISTA_STATUS_DANADAS)
                     status_d_otro = st.text_input("Especifica el status (Solo si elegiste 'Otros')")
-                    
                 with c3:
                     cust_d = st.text_input("Customer (Cliente)")
                     dist_d = st.text_input("Distributor (Distribuidor)")
@@ -730,7 +728,6 @@ elif division == MENU_INV:
                     
                 if st.form_submit_button("Guardar Pieza Dañada"):
                     stat_final = status_d_otro.strip() if status_d == "Otros" and status_d_otro.strip() != "" else status_d
-                    
                     nuevo_id = int(df_danadas['ID'].max() + 1) if not df_danadas.empty else 1
                     nuevo_reg = pd.DataFrame([{
                         "ID": nuevo_id, "PN": pn_d, "Description": desc_d, "SN": sn_d,
@@ -743,7 +740,6 @@ elif division == MENU_INV:
                     
         if not df_danadas.empty:
             st.dataframe(df_danadas, use_container_width=True, hide_index=True)
-            
             st.write("### ⚙️ Gestionar Piezas Dañadas")
             
             with st.expander("✏️ Editar Pieza Dañada"):
@@ -759,7 +755,6 @@ elif division == MENU_INV:
                         
                         stat_act = str(df_danadas.at[idx_d, 'Status']).strip()
                         idx_stat = LISTA_STATUS_DANADAS.index(stat_act) if stat_act in LISTA_STATUS_DANADAS else LISTA_STATUS_DANADAS.index("Otros")
-                        
                         e_status_d = st.selectbox("Status", LISTA_STATUS_DANADAS, index=idx_stat)
                         e_status_d_otro = st.text_input("Especifica (Si elegiste Otros)", value=stat_act if stat_act not in LISTA_STATUS_DANADAS else "")
                         
@@ -769,7 +764,6 @@ elif division == MENU_INV:
                         
                         if st.form_submit_button("💾 Guardar Edición"):
                             stat_f_ed = e_status_d_otro.strip() if e_status_d == "Otros" and e_status_d_otro.strip() != "" else e_status_d
-                            
                             cambios = []
                             campos_ver = [
                                 ('PN', e_pn_d), ('SN', e_sn_d), ('Description', e_desc_d), 
@@ -795,38 +789,42 @@ elif division == MENU_INV:
                     eliminar_registro_gsheets(conn_servicio, df_danadas, id_borrar_d, "Inv_Danadas")
                     st.success("Pieza eliminada."); st.rerun()
         else:
-            st.info("No hay piezas dañadas registradas.")
+            st.info("No hay piezas dadas de baja registradas.")
 
 # ==========================================
-# DIVISIÓN: PANEL DE USUARIOS (SOLO ADMIN)
+# DIVISIÓN: EQUIPOS DEMO (NUEVA SECCIÓN DINÁMICA)
 # ==========================================
-elif division == MENU_USR:
-    st.header("Gestión de Usuarios")
+elif division == MENU_DEMO:
+    st.header("💻 Inventario de Equipos Demo (Oficina)")
+    # Actualizado con los nombres exactos de tu imagen
+    cols_demo = ["ID", "Model", "Serial Number", "Dedicated Unit", "Creado por"]
     
-    df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
-    st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
-    
-    with st.expander("➕ Crear Nuevo Usuario", expanded=False):
-        with st.form("nuevo_usuario", clear_on_submit=True):
-            nuevo_user = st.text_input("Nombre de Usuario")
-            nuevo_pass = st.text_input("Contraseña")
-            nuevo_rol = st.selectbox("Rol", ["Usuario", "Admin"])
-            
-            if st.form_submit_button("Crear Usuario"):
-                if nuevo_user and nuevo_pass:
-                    fila_user = pd.DataFrame([{"Usuario": str(nuevo_user).strip(), "Password": str(nuevo_pass).strip(), "Rol": str(nuevo_rol).strip(), "Ultimo Acceso": ""}])
-                    conn_servicio.update(worksheet="Usuarios", data=pd.concat([df_usuarios, fila_user], ignore_index=True))
-                    st.success(f"Usuario '{nuevo_user}' creado."); st.rerun()
-                else:
-                    st.error("Por favor, llena todos los campos.")
-                    
-    st.markdown("---")
-    st.subheader("🕵️‍♂️ Registro de Auditoría (Cambios realizados)")
     try:
-        df_auditoria = conn_servicio.read(worksheet="Auditoria", ttl=0).dropna(how='all')
-        if not df_auditoria.empty:
-            st.dataframe(df_auditoria, use_container_width=True, hide_index=True)
-        else:
-            st.info("Aún no hay registros de cambios.")
+        df_demo = conn_marketing.read(worksheet="Equipos_Demo", ttl=0)
+        df_demo = preparar_df(df_demo, cols_demo).fillna("")
+        if not df_demo.empty:
+            df_demo['Serial Number'] = df_demo['Serial Number'].apply(limpiar_serie)
     except:
-        st.info("La tabla de Auditoria aún no se ha creado o está vacía.")
+        df_demo = pd.DataFrame(columns=cols_demo)
+
+    # 1. OBTENER SERIES BAJO PRÉSTAMO ACTIVO EN MARKETING EN TIEMPO REAL
+    series_prestadas = []
+    try:
+        df_mkt_actual = conn_marketing.read(ttl=0)
+        df_mkt_actual = preparar_df(df_mkt_actual, ["Numero de serie", "Estado"]).fillna("")
+        series_prestadas = df_mkt_actual[df_mkt_actual['Estado'] == 'Activo']["Numero de serie"].apply(limpiar_serie).tolist()
+    except:
+        pass
+
+    # 2. FILTRAR EL INVENTARIO DINÁMICAMENTE
+    if not df_demo.empty:
+        df_demo['Serie_Aux'] = df_demo['Serial Number'].apply(limpiar_serie)
+        df_demo_disponibles = df_demo[~df_demo['Serie_Aux'].isin(series_prestadas)].drop(columns=['Serie_Aux'])
+        df_demo_prestados = df_demo[df_demo['Serie_Aux'].isin(series_prestadas)].drop(columns=['Serie_Aux'])
+        df_demo = df_demo.drop(columns=['Serie_Aux'])
+    else:
+        df_demo_disponibles = pd.DataFrame(columns=cols_demo)
+        df_demo_prestados = pd.DataFrame(columns=cols_demo)
+
+    # 3. VISTAS DEL INVENTARIO
+    st.subheader("✅ Equipos Disponibles
