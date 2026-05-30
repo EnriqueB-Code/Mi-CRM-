@@ -796,7 +796,6 @@ elif division == MENU_INV:
 # ==========================================
 elif division == MENU_DEMO:
     st.header("💻 Inventario de Equipos Demo (Oficina)")
-    # Actualizado con los nombres exactos de tu imagen
     cols_demo = ["ID", "Model", "Serial Number", "Dedicated Unit", "Creado por"]
     
     try:
@@ -827,4 +826,126 @@ elif division == MENU_DEMO:
         df_demo_prestados = pd.DataFrame(columns=cols_demo)
 
     # 3. VISTAS DEL INVENTARIO
-    st.subheader("✅ Equipos Disponibles
+    st.subheader("✅ Equipos Disponibles en la Oficina")
+    if not df_demo_disponibles.empty:
+        st.dataframe(df_demo_disponibles, use_container_width=True, hide_index=True)
+    else:
+        st.info("No hay equipos demo disponibles en oficina en este momento.")
+
+    if not df_demo_prestados.empty:
+        with st.expander("📦 Ver Equipos Actuales en Préstamo Externo"):
+            st.warning("Estos equipos no aparecen arriba porque actualmente están asignados a un KOL en Marketing.")
+            st.dataframe(df_demo_prestados, use_container_width=True, hide_index=True)
+
+    # 4. OPERACIONES DEL CATÁLOGO (ALTAS, BAJAS, CAMBIOS)
+    st.write("---")
+    st.write("### ⚙️ Administración de Catálogo de Equipos Demo")
+    tab_alta_d, tab_edit_d = st.tabs(["➕ Registrar Equipo Demo", "✏️ Editar / Eliminar Equipo"])
+
+    with tab_alta_d:
+        with st.form("form_alta_demo", clear_on_submit=True):
+            d_modelo = st.text_input("Model (Ej. Phased Array Probe S1-5P)")
+            d_serie = st.text_input("Serial Number")
+            
+            d_ded_sel = st.selectbox("Dedicated Unit", LISTA_EQUIPOS, key="ded_ins_d")
+            d_ded_otro = st.text_input("Especifica Dedicated Unit (Si elegiste 'Otro / Particular')", key="ded_ins_o_d")
+            
+            if st.form_submit_button("Guardar Equipo Demo"):
+                if d_serie.strip() == "":
+                    st.error("El Serial Number es obligatorio.")
+                else:
+                    ded_final_d = d_ded_otro.strip() if d_ded_sel == "Otro / Particular" and d_ded_otro.strip() != "" else d_ded_sel
+                    nuevo_id = int(df_demo['ID'].max() + 1) if not df_demo.empty else 1
+                    nuevo_reg = pd.DataFrame([{
+                        "ID": nuevo_id, 
+                        "Model": str(d_modelo).strip(), 
+                        "Serial Number": str(d_serie).strip(), 
+                        "Dedicated Unit": ded_final_d,
+                        "Creado por": st.session_state['usuario']
+                    }])
+                    conn_marketing.update(worksheet="Equipos_Demo", data=pd.concat([df_demo, nuevo_reg], ignore_index=True))
+                    st.success("Equipo demo agregado al catálogo maestro."); st.rerun()
+
+    with tab_edit_d:
+        if not df_demo.empty:
+            id_ed_demo = st.selectbox("Selecciona ID de Equipo Demo para modificar:", df_demo['ID'].unique(), key="sb_edit_demo")
+            if id_ed_demo:
+                idx_demo = df_demo.index[df_demo['ID'] == id_ed_demo].tolist()[0]
+                
+                with st.form("form_edit_demo"):
+                    e_mod_d = st.text_input("Model", value=df_demo.at[idx_demo, 'Model'])
+                    e_ser_d = st.text_input("Serial Number", value=df_demo.at[idx_demo, 'Serial Number'])
+                    
+                    ded_act = str(df_demo.at[idx_demo, 'Dedicated Unit']).strip()
+                    idx_ded = LISTA_EQUIPOS.index(ded_act) if ded_act in LISTA_EQUIPOS else LISTA_EQUIPOS.index("Otro / Particular")
+                    
+                    e_ded_sel = st.selectbox("Dedicated Unit", LISTA_EQUIPOS, index=idx_ded)
+                    e_ded_otro = st.text_input("Especifica (Si elegiste Otro)", value=ded_act if ded_act not in LISTA_EQUIPOS else "")
+                    
+                    col_sav_d, col_spc_d = st.columns([1, 4])
+                    with col_sav_d:
+                        save_btn = st.form_submit_button("💾 Guardar Cambios")
+                        
+                    if save_btn:
+                        ded_f_ed = e_ded_otro.strip() if e_ded_sel == "Otro / Particular" and e_ded_otro.strip() != "" else e_ded_sel
+                        cambios = []
+                        campos_ver = [
+                            ('Model', str(e_mod_d).strip()), 
+                            ('Serial Number', str(e_ser_d).strip()), 
+                            ('Dedicated Unit', ded_f_ed)
+                        ]
+                        
+                        for col, nvo_val in campos_ver:
+                            ant_val = str(df_demo.at[idx_demo, col])
+                            if ant_val != str(nvo_val):
+                                cambios.append({'modulo':'Equipos_Demo', 'id':id_ed_demo, 'campo':col, 'ant':ant_val, 'nvo':str(nvo_val)})
+                                df_demo.at[idx_demo, col] = str(nvo_val)
+                                
+                        if cambios:
+                            registrar_auditoria(cambios)
+                            conn_marketing.update(worksheet="Equipos_Demo", data=df_demo)
+                            st.success("Equipo modificado."); st.rerun()
+                        else:
+                            st.info("Sin cambios detectados.")
+
+                if st.session_state['rol'] == 'Admin':
+                    st.write("⚠️ **Zona de peligro (Admin):**")
+                    if st.button("🗑️ Eliminar permanentemente de la Base de Datos"):
+                        eliminar_registro_gsheets(conn_marketing, df_demo, id_ed_demo, "Equipos_Demo")
+                        st.success("Equipo eliminado del inventario maestro."); st.rerun()
+        else:
+            st.info("No hay equipos registrados en la base de datos.")
+
+# ==========================================
+# DIVISIÓN: PANEL DE USUARIOS (SOLO ADMIN)
+# ==========================================
+elif division == MENU_USR:
+    st.header("Gestión de Usuarios")
+    
+    df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
+    st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
+    
+    with st.expander("➕ Crear Nuevo Usuario", expanded=False):
+        with st.form("nuevo_usuario", clear_on_submit=True):
+            nuevo_user = st.text_input("Nombre de Usuario")
+            nuevo_pass = st.text_input("Contraseña")
+            nuevo_rol = st.selectbox("Rol", ["Usuario", "Admin"])
+            
+            if st.form_submit_button("Crear Usuario"):
+                if nuevo_user and nuevo_pass:
+                    fila_user = pd.DataFrame([{"Usuario": str(nuevo_user).strip(), "Password": str(nuevo_pass).strip(), "Rol": str(nuevo_rol).strip(), "Ultimo Acceso": ""}])
+                    conn_servicio.update(worksheet="Usuarios", data=pd.concat([df_usuarios, fila_user], ignore_index=True))
+                    st.success(f"Usuario '{nuevo_user}' creado."); st.rerun()
+                else:
+                    st.error("Por favor, llena todos los campos.")
+                    
+    st.markdown("---")
+    st.subheader("🕵️‍♂️ Registro de Auditoría (Cambios realizados)")
+    try:
+        df_auditoria = conn_servicio.read(worksheet="Auditoria", ttl=0).dropna(how='all')
+        if not df_auditoria.empty:
+            st.dataframe(df_auditoria, use_container_width=True, hide_index=True)
+        else:
+            st.info("Aún no hay registros de cambios.")
+    except:
+        st.info("La tabla de Auditoria aún no se ha creado o está vacía.")
