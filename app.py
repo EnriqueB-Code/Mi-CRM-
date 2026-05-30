@@ -62,7 +62,6 @@ def iniciar_sesion(usuario, password):
         st.session_state['usuario'] = user_limpio
         st.session_state['rol'] = str(usuario_valido.iloc[0]['Rol']).strip()
         
-        # REGISTRAR ÚLTIMO ACCESO
         idx = df_usuarios.index[df_usuarios['Usuario'] == user_limpio].tolist()[0]
         if 'Ultimo Acceso' not in df_usuarios.columns:
             df_usuarios['Ultimo Acceso'] = ""
@@ -121,7 +120,6 @@ def eliminar_registro_gsheets(conexion, df_original, id_a_borrar):
     if diferencia > 0:
         filas_vacias = pd.DataFrame([[""] * len(df_original.columns)] * diferencia, columns=df_original.columns)
         df_escritura = pd.concat([df_nuevo, filas_vacias], ignore_index=True)
-        # Recalcular IDs tras borrar
         df_escritura['ID'] = range(1, len(df_escritura) + 1)
         conexion.update(data=df_escritura)
     else:
@@ -158,6 +156,7 @@ def registrar_auditoria(cambios):
 MENU_SERV = "🔧 Servicio Técnico"
 MENU_MKT = "📈 Marketing"
 MENU_EVE = "📅 Calendario de Eventos"
+MENU_INV = "📦 Inventario"
 MENU_USR = "⚙️ Panel de Usuarios"
 
 # ==========================================
@@ -170,7 +169,7 @@ if st.sidebar.button("Cerrar Sesión"):
     st.rerun()
 
 st.sidebar.markdown("---")
-opciones_menu = [MENU_SERV, MENU_MKT, MENU_EVE]
+opciones_menu = [MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV]
 
 if st.session_state['rol'] == 'Admin':
     opciones_menu.append(MENU_USR)
@@ -227,7 +226,6 @@ if division == MENU_SERV:
                     seg_actual = str(df_servicio.at[idx, 'Seguimiento con fabrica'])
                     texto_final = f"{seg_actual}\n[{hoy}] {nuevo_seguimiento}".strip() if seg_actual else f"[{hoy}] {nuevo_seguimiento}"
                     
-                    # Log auditoria
                     registrar_auditoria([{'modulo': 'Servicio', 'id': id_actualizar, 'campo': 'Seguimiento con fabrica', 'ant': seg_actual, 'nvo': texto_final}])
                     
                     df_servicio.at[idx, 'Seguimiento con fabrica'] = texto_final
@@ -290,8 +288,7 @@ if division == MENU_SERV:
                         if cambios:
                             registrar_auditoria(cambios)
                             conn_servicio.update(data=df_servicio)
-                            st.success("Cambios guardados.")
-                            st.rerun()
+                            st.success("Cambios guardados."); st.rerun()
                         else:
                             st.info("No se detectaron cambios.")
 
@@ -388,7 +385,6 @@ elif division == MENU_MKT:
             with col1: f_inicio = st.date_input("Fecha de Inicio")
             with col2: f_fin = st.date_input("Fecha de Devolución FÍSICA")
             with col3: dias_otorgados = st.number_input("Días de Licencia (Contraseña)", min_value=1, step=1, value=1)
-            st.caption("💡 *Si es 'Otro / Particular', los días de licencia no se calculan.*")
             
             if st.form_submit_button("Guardar Préstamo"):
                 if f_fin < f_inicio: 
@@ -594,6 +590,108 @@ elif division == MENU_EVE:
                     st.success("Evento eliminado."); st.rerun()
     else:
         st.info("No hay eventos registrados.")
+
+# ==========================================
+# DIVISIÓN: INVENTARIO
+# ==========================================
+elif division == MENU_INV:
+    st.header("📦 Control de Inventario")
+    tab_nuevas, tab_danadas = st.tabs(["✨ Piezas Nuevas", "🛠️ Piezas Dañadas"])
+    
+    # --- PIEZAS NUEVAS ---
+    with tab_nuevas:
+        cols_nuevas = ["ID", "Box #", "PN", "Description", "SN", "Receive", "Status", "From", "Current Location", "Remarks", "Creado por"]
+        try:
+            df_nuevas = conn_servicio.read(worksheet="Inv_Nuevas", ttl=0)
+            df_nuevas = preparar_df(df_nuevas, cols_nuevas).fillna("")
+        except:
+            df_nuevas = pd.DataFrame(columns=cols_nuevas)
+            
+        with st.expander("➕ Registrar Pieza Nueva"):
+            with st.form("form_nva_pieza", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    box = st.text_input("Box #")
+                    pn = st.text_input("PN (Número de Parte)")
+                    sn = st.text_input("SN (Número de Serie)")
+                with c2:
+                    desc = st.text_area("Description")
+                    receive = st.date_input("Receive (Fecha de recepción)")
+                with c3:
+                    status = st.text_input("Status")
+                    from_loc = st.text_input("From (Origen)")
+                    curr_loc = st.text_input("Current Location (Ubicación actual)")
+                remarks = st.text_input("Remarks (Comentarios)")
+                
+                if st.form_submit_button("Guardar Pieza Nueva"):
+                    nuevo_id = int(df_nuevas['ID'].max() + 1) if not df_nuevas.empty else 1
+                    nuevo_reg = pd.DataFrame([{
+                        "ID": nuevo_id, "Box #": box, "PN": pn, "Description": desc, "SN": sn,
+                        "Receive": str(receive), "Status": status, "From": from_loc, 
+                        "Current Location": curr_loc, "Remarks": remarks, "Creado por": st.session_state['usuario']
+                    }])
+                    conn_servicio.update(worksheet="Inv_Nuevas", data=pd.concat([df_nuevas, nuevo_reg], ignore_index=True))
+                    st.success("Pieza nueva registrada exitosamente."); st.rerun()
+                    
+        if not df_nuevas.empty:
+            st.dataframe(df_nuevas, use_container_width=True, hide_index=True)
+            if st.session_state['rol'] == 'Admin':
+                id_borrar_n = st.selectbox("Selecciona ID a borrar (Nuevas):", df_nuevas['ID'].unique(), key="del_nv")
+                if st.button("🗑️ Borrar Pieza Nueva"):
+                    df_res = df_nuevas[df_nuevas['ID'] != id_borrar_n].copy()
+                    df_res['ID'] = range(1, len(df_res) + 1)
+                    conn_servicio.update(worksheet="Inv_Nuevas", data=df_res)
+                    st.success("Pieza eliminada."); st.rerun()
+        else:
+            st.info("No hay piezas nuevas registradas.")
+
+    # --- PIEZAS DAÑADAS ---
+    with tab_danadas:
+        cols_danadas = ["ID", "PN", "Description", "SN", "Origin Unit", "Origin Unit SN", "Status", "Customer", "Distributor", "Tracking Number", "Creado por"]
+        try:
+            df_danadas = conn_servicio.read(worksheet="Inv_Danadas", ttl=0)
+            df_danadas = preparar_df(df_danadas, cols_danadas).fillna("")
+        except:
+            df_danadas = pd.DataFrame(columns=cols_danadas)
+            
+        with st.expander("➕ Registrar Pieza Dañada"):
+            with st.form("form_danada", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    pn_d = st.text_input("PN (Número de Parte)")
+                    sn_d = st.text_input("SN (Número de Serie)")
+                    desc_d = st.text_area("Description")
+                with c2:
+                    ou_d = st.text_input("Origin Unit (Equipo de origen)")
+                    ou_sn_d = st.text_input("Origin Unit SN (Serie equipo origen)")
+                    status_d = st.text_input("Status")
+                with c3:
+                    cust_d = st.text_input("Customer (Cliente)")
+                    dist_d = st.text_input("Distributor (Distribuidor)")
+                    track_d = st.text_input("Tracking Number (Guía)")
+                    
+                if st.form_submit_button("Guardar Pieza Dañada"):
+                    nuevo_id = int(df_danadas['ID'].max() + 1) if not df_danadas.empty else 1
+                    nuevo_reg = pd.DataFrame([{
+                        "ID": nuevo_id, "PN": pn_d, "Description": desc_d, "SN": sn_d,
+                        "Origin Unit": ou_d, "Origin Unit SN": ou_sn_d, "Status": status_d, 
+                        "Customer": cust_d, "Distributor": dist_d, "Tracking Number": track_d,
+                        "Creado por": st.session_state['usuario']
+                    }])
+                    conn_servicio.update(worksheet="Inv_Danadas", data=pd.concat([df_danadas, nuevo_reg], ignore_index=True))
+                    st.success("Pieza dañada registrada exitosamente."); st.rerun()
+                    
+        if not df_danadas.empty:
+            st.dataframe(df_danadas, use_container_width=True, hide_index=True)
+            if st.session_state['rol'] == 'Admin':
+                id_borrar_d = st.selectbox("Selecciona ID a borrar (Dañadas):", df_danadas['ID'].unique(), key="del_da")
+                if st.button("🗑️ Borrar Pieza Dañada"):
+                    df_res = df_danadas[df_danadas['ID'] != id_borrar_d].copy()
+                    df_res['ID'] = range(1, len(df_res) + 1)
+                    conn_servicio.update(worksheet="Inv_Danadas", data=df_res)
+                    st.success("Pieza eliminada."); st.rerun()
+        else:
+            st.info("No hay piezas dañadas registradas.")
 
 # ==========================================
 # DIVISIÓN: PANEL DE USUARIOS (SOLO ADMIN)
