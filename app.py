@@ -15,7 +15,7 @@ except Exception as e:
     st.stop()
 
 # ==========================================
-# LISTA MAESTRA DE EQUIPOS
+# LISTAS MAESTRAS
 # ==========================================
 LISTA_EQUIPOS = [
     "SonoEye P1", "SonoEye P2", "SonoEye P3", "SonoEye P5", "SonoEye P6", 
@@ -27,6 +27,14 @@ LISTA_EQUIPOS = [
     "CBit4", "CBit6", "CBit8", "CBit9", "CBit10", 
     "SonoPort8", "XBit80", "Xbit90", "SonoMax7", "SonoMax9", 
     "Otro / Particular"
+]
+
+LISTA_STATUS_DANADAS = [
+    "Shipped to Singapore", 
+    "Threw it away", 
+    "Waiting to be shipped to HongKong", 
+    "Waiting to be shipped to Mexico's office", 
+    "Otros"
 ]
 
 # ==========================================
@@ -114,16 +122,22 @@ def limpiar_decimales(valor):
     except (ValueError, TypeError):
         return str(valor).strip()
 
-def eliminar_registro_gsheets(conexion, df_original, id_a_borrar):
+def eliminar_registro_gsheets(conexion, df_original, id_a_borrar, nombre_pestana=None):
     df_nuevo = df_original[df_original['ID'] != id_a_borrar].copy()
     diferencia = len(df_original) - len(df_nuevo)
     if diferencia > 0:
         filas_vacias = pd.DataFrame([[""] * len(df_original.columns)] * diferencia, columns=df_original.columns)
         df_escritura = pd.concat([df_nuevo, filas_vacias], ignore_index=True)
         df_escritura['ID'] = range(1, len(df_escritura) + 1)
-        conexion.update(data=df_escritura)
+        if nombre_pestana:
+            conexion.update(worksheet=nombre_pestana, data=df_escritura)
+        else:
+            conexion.update(data=df_escritura)
     else:
-        conexion.update(data=df_nuevo)
+        if nombre_pestana:
+            conexion.update(worksheet=nombre_pestana, data=df_nuevo)
+        else:
+            conexion.update(data=df_nuevo)
 
 def mover_fila(df, id_sel, direccion):
     idx = df.index[df['ID'] == id_sel].tolist()[0]
@@ -386,6 +400,8 @@ elif division == MENU_MKT:
             with col2: f_fin = st.date_input("Fecha de Devolución FÍSICA")
             with col3: dias_otorgados = st.number_input("Días de Licencia (Contraseña)", min_value=1, step=1, value=1)
             
+            st.caption("💡 *Nota: Si seleccionas 'Otro / Particular', los días de licencia no se tomarán en cuenta.*")
+            
             if st.form_submit_button("Guardar Préstamo"):
                 if f_fin < f_inicio: 
                     st.error("La fecha de devolución no puede ser menor a la fecha de inicio.")
@@ -581,12 +597,7 @@ elif division == MENU_EVE:
             with col_del:
                 st.write(""); st.write("")
                 if st.button("🗑️ Borrar Evento"):
-                    df_nuevo = df_eventos[df_eventos['ID'] != id_gest_e].copy()
-                    df_nuevo['ID'] = range(1, len(df_nuevo) + 1)
-                    if len(df_eventos) - len(df_nuevo) > 0:
-                        filas_vacias = pd.DataFrame([[""] * len(df_eventos.columns)], columns=df_eventos.columns)
-                        conn_marketing.update(worksheet="Eventos", data=pd.concat([df_nuevo, filas_vacias], ignore_index=True))
-                    else: conn_marketing.update(worksheet="Eventos", data=df_nuevo)
+                    eliminar_registro_gsheets(conn_marketing, df_eventos, id_gest_e, "Eventos")
                     st.success("Evento eliminado."); st.rerun()
     else:
         st.info("No hay eventos registrados.")
@@ -635,12 +646,55 @@ elif division == MENU_INV:
                     
         if not df_nuevas.empty:
             st.dataframe(df_nuevas, use_container_width=True, hide_index=True)
+            
+            st.write("### ⚙️ Gestionar Piezas Nuevas")
+            
+            with st.expander("✏️ Editar Pieza Nueva"):
+                id_ed_n = st.selectbox("Selecciona ID a editar:", df_nuevas['ID'].unique(), key="edit_sel_n")
+                if id_ed_n:
+                    idx_n = df_nuevas.index[df_nuevas['ID'] == id_ed_n].tolist()[0]
+                    with st.form("form_edit_n"):
+                        e_box = st.text_input("Box #", value=df_nuevas.at[idx_n, 'Box #'])
+                        e_pn = st.text_input("PN", value=df_nuevas.at[idx_n, 'PN'])
+                        e_sn = st.text_input("SN", value=df_nuevas.at[idx_n, 'SN'])
+                        e_desc = st.text_area("Description", value=df_nuevas.at[idx_n, 'Description'])
+                        
+                        try:
+                            val_date = str(df_nuevas.at[idx_n, 'Receive']).strip()
+                            e_rec = datetime.strptime(val_date, '%Y-%m-%d').date()
+                        except:
+                            e_rec = hoy
+                        
+                        e_receive = st.date_input("Receive", value=e_rec)
+                        e_status = st.text_input("Status", value=df_nuevas.at[idx_n, 'Status'])
+                        e_from = st.text_input("From", value=df_nuevas.at[idx_n, 'From'])
+                        e_loc = st.text_input("Current Location", value=df_nuevas.at[idx_n, 'Current Location'])
+                        e_rem = st.text_input("Remarks", value=df_nuevas.at[idx_n, 'Remarks'])
+                        
+                        if st.form_submit_button("💾 Guardar Edición"):
+                            cambios = []
+                            campos_ver = [
+                                ('Box #', e_box), ('PN', e_pn), ('SN', e_sn), ('Description', e_desc),
+                                ('Receive', str(e_receive)), ('Status', e_status), ('From', e_from),
+                                ('Current Location', e_loc), ('Remarks', e_rem)
+                            ]
+                            for col, nvo_val in campos_ver:
+                                ant_val = str(df_nuevas.at[idx_n, col])
+                                if ant_val != str(nvo_val):
+                                    cambios.append({'modulo':'Inv_Nuevas', 'id':id_ed_n, 'campo':col, 'ant':ant_val, 'nvo':str(nvo_val)})
+                                    df_nuevas.at[idx_n, col] = str(nvo_val)
+                            
+                            if cambios:
+                                registrar_auditoria(cambios)
+                                conn_servicio.update(worksheet="Inv_Nuevas", data=df_nuevas)
+                                st.success("Cambios guardados."); st.rerun()
+                            else:
+                                st.info("No se detectaron cambios.")
+            
             if st.session_state['rol'] == 'Admin':
                 id_borrar_n = st.selectbox("Selecciona ID a borrar (Nuevas):", df_nuevas['ID'].unique(), key="del_nv")
                 if st.button("🗑️ Borrar Pieza Nueva"):
-                    df_res = df_nuevas[df_nuevas['ID'] != id_borrar_n].copy()
-                    df_res['ID'] = range(1, len(df_res) + 1)
-                    conn_servicio.update(worksheet="Inv_Nuevas", data=df_res)
+                    eliminar_registro_gsheets(conn_servicio, df_nuevas, id_borrar_n, "Inv_Nuevas")
                     st.success("Pieza eliminada."); st.rerun()
         else:
             st.info("No hay piezas nuevas registradas.")
@@ -664,17 +718,22 @@ elif division == MENU_INV:
                 with c2:
                     ou_d = st.text_input("Origin Unit (Equipo de origen)")
                     ou_sn_d = st.text_input("Origin Unit SN (Serie equipo origen)")
-                    status_d = st.text_input("Status")
+                    
+                    status_d = st.selectbox("Status", LISTA_STATUS_DANADAS)
+                    status_d_otro = st.text_input("Especifica el status (Solo si elegiste 'Otros')")
+                    
                 with c3:
                     cust_d = st.text_input("Customer (Cliente)")
                     dist_d = st.text_input("Distributor (Distribuidor)")
                     track_d = st.text_input("Tracking Number (Guía)")
                     
                 if st.form_submit_button("Guardar Pieza Dañada"):
+                    stat_final = status_d_otro.strip() if status_d == "Otros" and status_d_otro.strip() != "" else status_d
+                    
                     nuevo_id = int(df_danadas['ID'].max() + 1) if not df_danadas.empty else 1
                     nuevo_reg = pd.DataFrame([{
                         "ID": nuevo_id, "PN": pn_d, "Description": desc_d, "SN": sn_d,
-                        "Origin Unit": ou_d, "Origin Unit SN": ou_sn_d, "Status": status_d, 
+                        "Origin Unit": ou_d, "Origin Unit SN": ou_sn_d, "Status": stat_final, 
                         "Customer": cust_d, "Distributor": dist_d, "Tracking Number": track_d,
                         "Creado por": st.session_state['usuario']
                     }])
@@ -683,12 +742,56 @@ elif division == MENU_INV:
                     
         if not df_danadas.empty:
             st.dataframe(df_danadas, use_container_width=True, hide_index=True)
+            
+            st.write("### ⚙️ Gestionar Piezas Dañadas")
+            
+            with st.expander("✏️ Editar Pieza Dañada"):
+                id_ed_d = st.selectbox("Selecciona ID a editar:", df_danadas['ID'].unique(), key="edit_sel_d")
+                if id_ed_d:
+                    idx_d = df_danadas.index[df_danadas['ID'] == id_ed_d].tolist()[0]
+                    with st.form("form_edit_d"):
+                        e_pn_d = st.text_input("PN", value=df_danadas.at[idx_d, 'PN'])
+                        e_sn_d = st.text_input("SN", value=df_danadas.at[idx_d, 'SN'])
+                        e_desc_d = st.text_area("Description", value=df_danadas.at[idx_d, 'Description'])
+                        e_ou = st.text_input("Origin Unit", value=df_danadas.at[idx_d, 'Origin Unit'])
+                        e_ou_sn = st.text_input("Origin Unit SN", value=df_danadas.at[idx_d, 'Origin Unit SN'])
+                        
+                        stat_act = str(df_danadas.at[idx_d, 'Status']).strip()
+                        idx_stat = LISTA_STATUS_DANADAS.index(stat_act) if stat_act in LISTA_STATUS_DANADAS else LISTA_STATUS_DANADAS.index("Otros")
+                        
+                        e_status_d = st.selectbox("Status", LISTA_STATUS_DANADAS, index=idx_stat)
+                        e_status_d_otro = st.text_input("Especifica (Si elegiste Otros)", value=stat_act if stat_act not in LISTA_STATUS_DANADAS else "")
+                        
+                        e_cust = st.text_input("Customer", value=df_danadas.at[idx_d, 'Customer'])
+                        e_dist = st.text_input("Distributor", value=df_danadas.at[idx_d, 'Distributor'])
+                        e_track = st.text_input("Tracking Number", value=df_danadas.at[idx_d, 'Tracking Number'])
+                        
+                        if st.form_submit_button("💾 Guardar Edición"):
+                            stat_f_ed = e_status_d_otro.strip() if e_status_d == "Otros" and e_status_d_otro.strip() != "" else e_status_d
+                            
+                            cambios = []
+                            campos_ver = [
+                                ('PN', e_pn_d), ('SN', e_sn_d), ('Description', e_desc_d), 
+                                ('Origin Unit', e_ou), ('Origin Unit SN', e_ou_sn), ('Status', stat_f_ed),
+                                ('Customer', e_cust), ('Distributor', e_dist), ('Tracking Number', e_track)
+                            ]
+                            for col, nvo_val in campos_ver:
+                                ant_val = str(df_danadas.at[idx_d, col])
+                                if ant_val != str(nvo_val):
+                                    cambios.append({'modulo':'Inv_Danadas', 'id':id_ed_d, 'campo':col, 'ant':ant_val, 'nvo':str(nvo_val)})
+                                    df_danadas.at[idx_d, col] = str(nvo_val)
+                            
+                            if cambios:
+                                registrar_auditoria(cambios)
+                                conn_servicio.update(worksheet="Inv_Danadas", data=df_danadas)
+                                st.success("Cambios guardados."); st.rerun()
+                            else:
+                                st.info("No se detectaron cambios.")
+            
             if st.session_state['rol'] == 'Admin':
                 id_borrar_d = st.selectbox("Selecciona ID a borrar (Dañadas):", df_danadas['ID'].unique(), key="del_da")
                 if st.button("🗑️ Borrar Pieza Dañada"):
-                    df_res = df_danadas[df_danadas['ID'] != id_borrar_d].copy()
-                    df_res['ID'] = range(1, len(df_res) + 1)
-                    conn_servicio.update(worksheet="Inv_Danadas", data=df_res)
+                    eliminar_registro_gsheets(conn_servicio, df_danadas, id_borrar_d, "Inv_Danadas")
                     st.success("Pieza eliminada."); st.rerun()
         else:
             st.info("No hay piezas dañadas registradas.")
