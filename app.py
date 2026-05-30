@@ -191,6 +191,9 @@ if st.session_state['rol'] == 'Admin':
 division = st.sidebar.radio("Selecciona la División:", opciones_menu)
 st.title("Panel de Control Sincronizado")
 
+# VARIABLE GLOBAL DE FECHA PARA TODO EL SISTEMA (Corrige el NameError)
+hoy = date.today()
+
 # ==========================================
 # DIVISIÓN: SERVICIO TÉCNICO
 # ==========================================
@@ -204,7 +207,6 @@ if division == MENU_SERV:
     if not df_servicio.empty:
         df_servicio['Numero de serie'] = df_servicio['Numero de serie'].apply(limpiar_serie)
 
-    hoy = date.today()
     hubo_cambios = False
     if not df_servicio.empty:
         for index, row in df_servicio.iterrows():
@@ -358,7 +360,6 @@ elif division == MENU_MKT:
         if 'Dias de licencia' in df_marketing.columns:
             df_marketing['Dias de licencia'] = df_marketing['Dias de licencia'].apply(limpiar_decimales)
 
-    hoy = date.today()
     hubo_cambios_mkt = False
     
     if not df_marketing.empty:
@@ -663,7 +664,7 @@ elif division == MENU_INV:
                             val_date = str(df_nuevas.at[idx_n, 'Receive']).strip()
                             e_rec = datetime.strptime(val_date, '%Y-%m-%d').date()
                         except:
-                            e_rec = hoy
+                            e_rec = hoy # <--- LA VARIABLE GLOBAL "HOY" SE USA AQUÍ SIN PROBLEMA
                         
                         e_receive = st.date_input("Receive", value=e_rec)
                         e_status = st.text_input("Status", value=df_nuevas.at[idx_n, 'Status'])
