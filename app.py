@@ -61,6 +61,14 @@ def iniciar_sesion(usuario, password):
         st.session_state['logeado'] = True
         st.session_state['usuario'] = user_limpio
         st.session_state['rol'] = str(usuario_valido.iloc[0]['Rol']).strip()
+        
+        # REGISTRAR ÚLTIMO ACCESO
+        idx = df_usuarios.index[df_usuarios['Usuario'] == user_limpio].tolist()[0]
+        if 'Ultimo Acceso' not in df_usuarios.columns:
+            df_usuarios['Ultimo Acceso'] = ""
+        df_usuarios.at[idx, 'Ultimo Acceso'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn_servicio.update(worksheet="Usuarios", data=df_usuarios)
+        
         st.rerun()
     else:
         st.error("❌ Usuario o contraseña incorrectos.")
@@ -75,7 +83,7 @@ if not st.session_state['logeado']:
     st.stop()
 
 # ==========================================
-# FUNCIONES DE UTILIDAD
+# FUNCIONES DE UTILIDAD Y AUDITORÍA
 # ==========================================
 def preparar_df(df, columnas):
     if df.empty:
@@ -113,13 +121,43 @@ def eliminar_registro_gsheets(conexion, df_original, id_a_borrar):
     if diferencia > 0:
         filas_vacias = pd.DataFrame([[""] * len(df_original.columns)] * diferencia, columns=df_original.columns)
         df_escritura = pd.concat([df_nuevo, filas_vacias], ignore_index=True)
+        # Recalcular IDs tras borrar
+        df_escritura['ID'] = range(1, len(df_escritura) + 1)
         conexion.update(data=df_escritura)
     else:
         conexion.update(data=df_nuevo)
 
+def mover_fila(df, id_sel, direccion):
+    idx = df.index[df['ID'] == id_sel].tolist()[0]
+    if direccion == 'up' and idx > 0:
+        b, a = df.iloc[idx].copy(), df.iloc[idx-1].copy()
+        df.iloc[idx], df.iloc[idx-1] = a, b
+    elif direccion == 'down' and idx < len(df) - 1:
+        b, a = df.iloc[idx].copy(), df.iloc[idx+1].copy()
+        df.iloc[idx], df.iloc[idx+1] = a, b
+    df['ID'] = range(1, len(df) + 1)
+    return df
+
+def registrar_auditoria(cambios):
+    if not cambios: return
+    try:
+        df_aud = conn_servicio.read(worksheet="Auditoria", ttl=0)
+    except:
+        df_aud = pd.DataFrame(columns=["Fecha", "Usuario", "Modulo", "ID Caso", "Campo", "Valor Anterior", "Valor Nuevo"])
+    
+    logs = []
+    fecha_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    usr = st.session_state['usuario']
+    for c in cambios:
+        logs.append({"Fecha": fecha_str, "Usuario": usr, "Modulo": c['modulo'], "ID Caso": c['id'], "Campo": c['campo'], "Valor Anterior": c['ant'], "Valor Nuevo": c['nvo']})
+    
+    df_final = pd.concat([df_aud, pd.DataFrame(logs)], ignore_index=True)
+    conn_servicio.update(worksheet="Auditoria", data=df_final)
+
 # Nombres estables de menú
 MENU_SERV = "🔧 Servicio Técnico"
 MENU_MKT = "📈 Marketing"
+MENU_EVE = "📅 Calendario de Eventos"
 MENU_USR = "⚙️ Panel de Usuarios"
 
 # ==========================================
@@ -132,7 +170,7 @@ if st.sidebar.button("Cerrar Sesión"):
     st.rerun()
 
 st.sidebar.markdown("---")
-opciones_menu = [MENU_SERV, MENU_MKT]
+opciones_menu = [MENU_SERV, MENU_MKT, MENU_EVE]
 
 if st.session_state['rol'] == 'Admin':
     opciones_menu.append(MENU_USR)
@@ -145,7 +183,7 @@ st.title("Panel de Control Sincronizado")
 # ==========================================
 if division == MENU_SERV:
     st.header("Gestión de Servicio")
-    cols_servicio = ["ID", "Cliente", "Caso reportado", "Modelo", "Numero de serie", "Seguimiento con fabrica", "Solucion del problema", "Fecha de reporte", "Fecha de cierre", "Estatus"]
+    cols_servicio = ["ID", "Cliente", "Caso reportado", "Modelo", "Numero de serie", "Seguimiento con fabrica", "Solucion del problema", "Fecha de reporte", "Fecha de cierre", "Estatus", "Creado por"]
     
     df_servicio = conn_servicio.read(ttl=0)
     df_servicio = preparar_df(df_servicio, cols_servicio).fillna("")
@@ -164,103 +202,132 @@ if division == MENU_SERV:
                     seguimiento = str(row['Seguimiento con fabrica']).strip()
                     
                     if dias_pasados >= 3 and seguimiento == "":
-                        st.error(f"🚨 **ALERTA:** El caso ID {row['ID']} (Serie: {row['Numero de serie']}) lleva {dias_pasados} días sin seguimiento.")
                         if str(row['Estatus']) != 'Sin Seguimiento (Alerta)':
                             df_servicio.at[index, 'Estatus'] = 'Sin Seguimiento (Alerta)'
                             hubo_cambios = True
                     elif seguimiento != "" and str(row['Estatus']) == 'Sin Seguimiento (Alerta)':
                         df_servicio.at[index, 'Estatus'] = 'Activo'
                         hubo_cambios = True
-                except ValueError: 
-                    pass
-        if hubo_cambios: 
-            conn_servicio.update(data=df_servicio)
+                except ValueError: pass
+        if hubo_cambios: conn_servicio.update(data=df_servicio)
 
-    with st.expander("➕ Registrar o Actualizar Caso", expanded=True):
+    tab_reg, tab_edit = st.tabs(["➕ Registrar / Actualizar", "✏️ Editar Caso"])
+    
+    with tab_reg:
         num_serie = st.text_input("🔍 Ingresa el Número de Serie:", key=f"buscador_serie_{st.session_state['serie_key']}")
-        
         if num_serie:
             num_serie_str = str(num_serie).strip()
             coincidencias = df_servicio[df_servicio['Numero de serie'] == num_serie_str]
-            
             if not coincidencias.empty:
                 st.warning(f"⚠️ El equipo '{num_serie_str}' ya tiene reportes.")
                 id_actualizar = st.selectbox("ID del caso para agregar seguimiento:", coincidencias['ID'].unique())
                 nuevo_seguimiento = st.text_area("Agregar reporte:")
-                
                 if st.button("📝 Guardar Seguimiento"):
                     idx = df_servicio.index[df_servicio['ID'] == id_actualizar].tolist()[0]
                     seg_actual = str(df_servicio.at[idx, 'Seguimiento con fabrica'])
                     texto_final = f"{seg_actual}\n[{hoy}] {nuevo_seguimiento}".strip() if seg_actual else f"[{hoy}] {nuevo_seguimiento}"
+                    
+                    # Log auditoria
+                    registrar_auditoria([{'modulo': 'Servicio', 'id': id_actualizar, 'campo': 'Seguimiento con fabrica', 'ant': seg_actual, 'nvo': texto_final}])
+                    
                     df_servicio.at[idx, 'Seguimiento con fabrica'] = texto_final
                     df_servicio.at[idx, 'Estatus'] = 'Activo'
                     conn_servicio.update(data=df_servicio)
-                    
                     st.session_state['serie_key'] += 1 
-                    st.success("Seguimiento guardado exitosamente.")
-                    st.rerun()
+                    st.success("Seguimiento guardado exitosamente."); st.rerun()
                 st.markdown("---")
             
             with st.form("nuevo_caso", clear_on_submit=True):
                 cliente = st.text_input("Cliente")
                 modelo_seleccionado = st.selectbox("Modelo del Equipo", LISTA_EQUIPOS)
                 modelo_otro = st.text_input("Especifica el modelo (Solo si elegiste 'Otro / Particular')")
-                
                 caso = st.text_area("Caso Reportado")
                 nuevo_seg_fabrica = st.text_area("Seguimiento con Fábrica (Opcional)")
                 nueva_solucion = st.text_area("Solución del Problema (Opcional)")
                 fecha_reporte = st.date_input("Fecha de Reporte")
                 
                 if st.form_submit_button("Guardar Nuevo Caso"):
-                    if modelo_seleccionado == "Otro / Particular" and modelo_otro.strip() != "":
-                        modelo_final = modelo_otro.strip()
-                    else:
-                        modelo_final = modelo_seleccionado
-
+                    modelo_final = modelo_otro.strip() if modelo_seleccionado == "Otro / Particular" and modelo_otro.strip() != "" else modelo_seleccionado
                     nuevo_id = int(df_servicio['ID'].max() + 1) if not df_servicio.empty else 1
                     nuevo_registro = pd.DataFrame([{
-                        "ID": nuevo_id, 
-                        "Cliente": cliente, 
-                        "Caso reportado": caso, 
-                        "Modelo": modelo_final, 
-                        "Numero de serie": num_serie_str, 
-                        "Seguimiento con fabrica": nuevo_seg_fabrica, 
-                        "Solucion del problema": nueva_solucion, 
-                        "Fecha de reporte": str(fecha_reporte), 
-                        "Fecha de cierre": "", 
-                        "Estatus": "Activo"
+                        "ID": nuevo_id, "Cliente": cliente, "Caso reportado": caso, "Modelo": modelo_final, 
+                        "Numero de serie": num_serie_str, "Seguimiento con fabrica": nuevo_seg_fabrica, 
+                        "Solucion del problema": nueva_solucion, "Fecha de reporte": str(fecha_reporte), 
+                        "Fecha de cierre": "", "Estatus": "Activo", "Creado por": st.session_state['usuario']
                     }])
                     conn_servicio.update(data=pd.concat([df_servicio, nuevo_registro], ignore_index=True))
-                    
-                    st.session_state['serie_key'] += 1 
-                    st.success("Caso registrado con éxito.")
-                    st.rerun()
+                    st.session_state['serie_key'] += 1; st.success("Caso registrado con éxito."); st.rerun()
+
+    with tab_edit:
+        if not df_servicio.empty:
+            id_ed_s = st.selectbox("Selecciona ID a editar:", df_servicio['ID'].unique(), key="edit_sel_s")
+            if id_ed_s:
+                idx = df_servicio.index[df_servicio['ID'] == id_ed_s].tolist()[0]
+                with st.form("form_edit_s"):
+                    cl_ed = st.text_input("Cliente", value=df_servicio.at[idx, 'Cliente'])
+                    mod_act = df_servicio.at[idx, 'Modelo']
+                    mod_ed = st.selectbox("Modelo", LISTA_EQUIPOS, index=LISTA_EQUIPOS.index(mod_act) if mod_act in LISTA_EQUIPOS else LISTA_EQUIPOS.index("Otro / Particular"))
+                    mod_o_ed = st.text_input("Especifica (si es Otro)", value=mod_act if mod_act not in LISTA_EQUIPOS else "")
+                    ns_ed = st.text_input("Número de serie", value=df_servicio.at[idx, 'Numero de serie'])
+                    caso_ed = st.text_area("Caso", value=df_servicio.at[idx, 'Caso reportado'])
+                    seg_ed = st.text_area("Seguimiento", value=df_servicio.at[idx, 'Seguimiento con fabrica'])
+                    sol_ed = st.text_area("Solución", value=df_servicio.at[idx, 'Solucion del problema'])
+                    est_ed = st.selectbox("Estatus", ["Activo", "Sin Seguimiento (Alerta)", "Finalizado"], index=["Activo", "Sin Seguimiento (Alerta)", "Finalizado"].index(df_servicio.at[idx, 'Estatus']) if df_servicio.at[idx, 'Estatus'] in ["Activo", "Sin Seguimiento (Alerta)", "Finalizado"] else 0)
+
+                    if st.form_submit_button("Guardar Edición"):
+                        modelo_f_ed = mod_o_ed.strip() if mod_ed == "Otro / Particular" and mod_o_ed.strip() != "" else mod_ed
+                        cambios = []
+                        campos_ver = [('Cliente', cl_ed), ('Modelo', modelo_f_ed), ('Numero de serie', ns_ed), 
+                                      ('Caso reportado', caso_ed), ('Seguimiento con fabrica', seg_ed), 
+                                      ('Solucion del problema', sol_ed), ('Estatus', est_ed)]
+                        
+                        for col, nvo_val in campos_ver:
+                            ant_val = str(df_servicio.at[idx, col])
+                            if ant_val != str(nvo_val):
+                                cambios.append({'modulo':'Servicio', 'id':id_ed_s, 'campo':col, 'ant':ant_val, 'nvo':str(nvo_val)})
+                                df_servicio.at[idx, col] = str(nvo_val)
+                        
+                        if cambios:
+                            registrar_auditoria(cambios)
+                            conn_servicio.update(data=df_servicio)
+                            st.success("Cambios guardados.")
+                            st.rerun()
+                        else:
+                            st.info("No se detectaron cambios.")
 
     st.subheader("Casos Registrados")
     if not df_servicio.empty:
         st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         st.write("### ⚙️ Gestionar Casos")
         
-        col_sel, col_fin, col_del = st.columns([2, 1, 1])
+        col_sel, col_up, col_down, col_fin, col_del = st.columns([2, 1, 1, 1.5, 1])
         with col_sel:
             id_gestion = st.selectbox("Selecciona ID:", df_servicio['ID'].unique(), key="gest_serv")
+        with col_up:
+            st.write(""); st.write("")
+            if st.button("⬆️ Subir", key="up_s"):
+                df_servicio = mover_fila(df_servicio, id_gestion, 'up')
+                conn_servicio.update(data=df_servicio); st.rerun()
+        with col_down:
+            st.write(""); st.write("")
+            if st.button("⬇️ Bajar", key="dw_s"):
+                df_servicio = mover_fila(df_servicio, id_gestion, 'down')
+                conn_servicio.update(data=df_servicio); st.rerun()
         with col_fin:
             st.write(""); st.write("")
             if st.button("✅ Finalizar Caso"):
                 idx = df_servicio.index[df_servicio['ID'] == id_gestion].tolist()[0]
+                registrar_auditoria([{'modulo':'Servicio', 'id':id_gestion, 'campo':'Estatus', 'ant':df_servicio.at[idx, 'Estatus'], 'nvo':'Finalizado'}])
                 df_servicio.at[idx, 'Estatus'] = 'Finalizado'
                 df_servicio.at[idx, 'Fecha de cierre'] = str(hoy)
-                conn_servicio.update(data=df_servicio)
-                st.success("Caso finalizado con éxito.")
-                st.rerun()
+                conn_servicio.update(data=df_servicio); st.success("Caso finalizado."); st.rerun()
                 
         if st.session_state['rol'] == 'Admin':
             with col_del:
                 st.write(""); st.write("")
                 if st.button("🗑️ Borrar Caso"):
                     eliminar_registro_gsheets(conn_servicio, df_servicio, id_gestion)
-                    st.success("Caso eliminado permanentemente de la nube.")
-                    st.rerun()
+                    st.success("Caso eliminado."); st.rerun()
     else:
         st.info("No hay casos registrados actualmente.")
 
@@ -269,7 +336,7 @@ if division == MENU_SERV:
 # ==========================================
 elif division == MENU_MKT:
     st.header("Gestión de Préstamos")
-    cols_mkt = ["ID", "KOL", "Lugar de prestamo", "Equipo", "Numero de serie", "Dias de licencia", "Vencimiento Licencia", "Fecha de inicio", "Fecha de finalizacion", "Estado"]
+    cols_mkt = ["ID", "KOL", "Lugar de prestamo", "Equipo", "Numero de serie", "Dias de licencia", "Vencimiento Licencia", "Fecha de inicio", "Fecha de finalizacion", "Estado", "Creado por"]
     
     df_marketing = conn_marketing.read(ttl=0)
     df_marketing = preparar_df(df_marketing, cols_mkt).fillna("")
@@ -286,104 +353,95 @@ elif division == MENU_MKT:
     if not df_marketing.empty:
         for index, row in df_marketing.iterrows():
             if str(row['Estado']) != 'Finalizado':
-                
-                # 1. Verificar la fecha en que deben devolver el equipo físicamente
                 if str(row['Fecha de finalizacion']).strip() != "":
                     try:
                         fecha_retorno = datetime.strptime(str(row['Fecha de finalizacion']), '%Y-%m-%d').date()
                         dias_retorno = (fecha_retorno - hoy).days
-                        if 0 <= dias_retorno <= 5: 
-                            st.warning(f"📦 **DEVOLUCIÓN PRÓXIMA:** El equipo '{row['Equipo']}' prestado a '{row['KOL']}' debe devolverse en {dias_retorno} días.")
-                        elif dias_retorno < 0: 
-                            st.error(f"❌ **DEVOLUCIÓN VENCIDA:** El préstamo de '{row['KOL']}' debió devolverse hace {abs(dias_retorno)} días.")
-                    except ValueError: 
-                        pass
+                        if 0 <= dias_retorno <= 5: st.warning(f"📦 **DEVOLUCIÓN PRÓXIMA:** '{row['Equipo']}' a '{row['KOL']}' devolver en {dias_retorno} días.")
+                        elif dias_retorno < 0: st.error(f"❌ **DEVOLUCIÓN VENCIDA:** '{row['KOL']}' debió devolver hace {abs(dias_retorno)} días.")
+                    except ValueError: pass
 
-                # 2. Verificar los días restantes de la Licencia (Software)
-                # Ahora esto no se ejecutará si "Vencimiento Licencia" está vacío (equipos particulares)
                 if str(row['Vencimiento Licencia']).strip() != "":
                     try:
                         venc_licencia = datetime.strptime(str(row['Vencimiento Licencia']), '%Y-%m-%d').date()
                         dias_lic_restantes = (venc_licencia - hoy).days
-                        
                         if str(row['Dias de licencia']) != str(dias_lic_restantes):
                             df_marketing.at[index, 'Dias de licencia'] = str(dias_lic_restantes)
                             hubo_cambios_mkt = True
-
-                        if 0 <= dias_lic_restantes <= 5: 
-                            st.warning(f"🔑 **LICENCIA POR VENCER:** La contraseña del equipo '{row['Equipo']}' de '{row['KOL']}' caduca en {dias_lic_restantes} días.")
-                        elif dias_lic_restantes < 0: 
-                            st.error(f"🚫 **LICENCIA CADUCADA:** La contraseña de '{row['Equipo']}' de '{row['KOL']}' se venció hace {abs(dias_lic_restantes)} días.")
-                    except ValueError: 
-                        pass
-                
-                # Respaldo por si hay datos viejos
-                elif str(row['Dias de licencia']).strip() != "":
-                    try:
-                        dias_estimados = int(float(row['Dias de licencia']))
-                        fecha_estimada = hoy + timedelta(days=dias_estimados)
-                        df_marketing.at[index, 'Vencimiento Licencia'] = str(fecha_estimada)
-                        hubo_cambios_mkt = True
-                    except:
-                        pass
+                        if 0 <= dias_lic_restantes <= 5: st.warning(f"🔑 **LICENCIA POR VENCER:** Contraseña de '{row['Equipo']}' de '{row['KOL']}' caduca en {dias_lic_restantes} días.")
+                        elif dias_lic_restantes < 0: st.error(f"🚫 **LICENCIA CADUCADA:** Contraseña de '{row['Equipo']}' de '{row['KOL']}' venció hace {abs(dias_lic_restantes)} días.")
+                    except ValueError: pass
                     
-        if hubo_cambios_mkt:
-            conn_marketing.update(data=df_marketing)
+        if hubo_cambios_mkt: conn_marketing.update(data=df_marketing)
 
-    with st.expander("➕ Registrar Préstamo", expanded=True):
+    tab_reg_m, tab_edit_m = st.tabs(["➕ Registrar Préstamo", "✏️ Editar Préstamo"])
+
+    with tab_reg_m:
         with st.form("nuevo_prestamo", clear_on_submit=True):
             kol = st.text_input("Nombre KOL")
             lugar = st.text_input("Lugar Préstamo")
-            
             equipo_seleccionado = st.selectbox("Equipo a Préstamo", LISTA_EQUIPOS)
             equipo_otro = st.text_input("Especifica el equipo (Solo si elegiste 'Otro / Particular')")
             num_serie_mkt = st.text_input("Número de Serie del Equipo")
             
-            # Fechas y Días separados
             col1, col2, col3 = st.columns(3)
-            with col1: 
-                f_inicio = st.date_input("Fecha de Inicio")
-            with col2: 
-                f_fin = st.date_input("Fecha de Devolución FÍSICA")
-            with col3:
-                dias_otorgados = st.number_input("Días de Licencia (Contraseña)", min_value=1, step=1, value=1)
-            
-            st.caption("💡 *Nota: Si seleccionas 'Otro / Particular', los días de licencia no se tomarán en cuenta.*")
+            with col1: f_inicio = st.date_input("Fecha de Inicio")
+            with col2: f_fin = st.date_input("Fecha de Devolución FÍSICA")
+            with col3: dias_otorgados = st.number_input("Días de Licencia (Contraseña)", min_value=1, step=1, value=1)
+            st.caption("💡 *Si es 'Otro / Particular', los días de licencia no se calculan.*")
             
             if st.form_submit_button("Guardar Préstamo"):
                 if f_fin < f_inicio: 
                     st.error("La fecha de devolución no puede ser menor a la fecha de inicio.")
                 else:
-                    if equipo_seleccionado == "Otro / Particular" and equipo_otro.strip() != "":
-                        equipo_final = equipo_otro.strip()
-                    else:
-                        equipo_final = equipo_seleccionado
-
-                    # NUEVA LÓGICA: Si es "Otro / Particular", los campos de licencia van vacíos
+                    equipo_final = equipo_otro.strip() if equipo_seleccionado == "Otro / Particular" and equipo_otro.strip() != "" else equipo_seleccionado
                     if equipo_seleccionado == "Otro / Particular":
-                        vencimiento_licencia_str = ""
-                        dias_licencia_str = ""
+                        venc_str, dias_str = "", ""
                     else:
-                        vencimiento_licencia = f_inicio + timedelta(days=dias_otorgados)
-                        vencimiento_licencia_str = str(vencimiento_licencia)
-                        dias_licencia_str = str((vencimiento_licencia - hoy).days)
+                        v_lic = f_inicio + timedelta(days=dias_otorgados)
+                        venc_str, dias_str = str(v_lic), str((v_lic - hoy).days)
 
                     nuevo_id = int(df_marketing['ID'].max() + 1) if not df_marketing.empty else 1
                     nuevo_reg = pd.DataFrame([{
-                        "ID": nuevo_id, 
-                        "KOL": kol, 
-                        "Lugar de prestamo": lugar, 
-                        "Equipo": equipo_final, 
-                        "Numero de serie": str(num_serie_mkt).strip(), 
-                        "Dias de licencia": dias_licencia_str, 
-                        "Vencimiento Licencia": vencimiento_licencia_str,
-                        "Fecha de inicio": str(f_inicio), 
-                        "Fecha de finalizacion": str(f_fin), 
-                        "Estado": "Activo"
+                        "ID": nuevo_id, "KOL": kol, "Lugar de prestamo": lugar, "Equipo": equipo_final, 
+                        "Numero de serie": str(num_serie_mkt).strip(), "Dias de licencia": dias_str, 
+                        "Vencimiento Licencia": venc_str, "Fecha de inicio": str(f_inicio), 
+                        "Fecha de finalizacion": str(f_fin), "Estado": "Activo", "Creado por": st.session_state['usuario']
                     }])
                     conn_marketing.update(data=pd.concat([df_marketing, nuevo_reg], ignore_index=True))
-                    st.success("Préstamo registrado exitosamente.")
-                    st.rerun()
+                    st.success("Préstamo registrado exitosamente."); st.rerun()
+
+    with tab_edit_m:
+        if not df_marketing.empty:
+            id_ed_m = st.selectbox("Selecciona ID a editar:", df_marketing['ID'].unique(), key="edit_sel_m")
+            if id_ed_m:
+                idx = df_marketing.index[df_marketing['ID'] == id_ed_m].tolist()[0]
+                with st.form("form_edit_m"):
+                    kol_ed = st.text_input("KOL", value=df_marketing.at[idx, 'KOL'])
+                    lug_ed = st.text_input("Lugar", value=df_marketing.at[idx, 'Lugar de prestamo'])
+                    eq_act = df_marketing.at[idx, 'Equipo']
+                    eq_ed = st.selectbox("Equipo", LISTA_EQUIPOS, index=LISTA_EQUIPOS.index(eq_act) if eq_act in LISTA_EQUIPOS else LISTA_EQUIPOS.index("Otro / Particular"))
+                    eq_o_ed = st.text_input("Especifica", value=eq_act if eq_act not in LISTA_EQUIPOS else "")
+                    ns_ed = st.text_input("Número de serie", value=df_marketing.at[idx, 'Numero de serie'])
+                    est_ed_m = st.selectbox("Estado", ["Activo", "Finalizado"], index=["Activo", "Finalizado"].index(df_marketing.at[idx, 'Estado']) if df_marketing.at[idx, 'Estado'] in ["Activo", "Finalizado"] else 0)
+
+                    if st.form_submit_button("Guardar Edición"):
+                        eq_f_ed = eq_o_ed.strip() if eq_ed == "Otro / Particular" and eq_o_ed.strip() != "" else eq_ed
+                        cambios = []
+                        campos_ver = [('KOL', kol_ed), ('Lugar de prestamo', lug_ed), ('Equipo', eq_f_ed), 
+                                      ('Numero de serie', ns_ed), ('Estado', est_ed_m)]
+                        for col, nvo_val in campos_ver:
+                            ant_val = str(df_marketing.at[idx, col])
+                            if ant_val != str(nvo_val):
+                                cambios.append({'modulo':'Marketing', 'id':id_ed_m, 'campo':col, 'ant':ant_val, 'nvo':str(nvo_val)})
+                                df_marketing.at[idx, col] = str(nvo_val)
+                        
+                        if cambios:
+                            registrar_auditoria(cambios)
+                            conn_marketing.update(data=df_marketing)
+                            st.success("Cambios guardados."); st.rerun()
+                        else:
+                            st.info("No se detectaron cambios.")
 
     st.subheader("Equipos en Préstamo")
     if not df_marketing.empty:
@@ -392,97 +450,181 @@ elif division == MENU_MKT:
         
         st.write("### ⚙️ Gestionar Préstamos y Licencias")
         
-        col_sel_m, col_renovar_lic, col_renovar_dev, col_fin_m, col_del_m = st.columns([1.5, 1.5, 1.5, 1, 1])
+        col_sel_m, col_up_m, col_down_m, col_ren_lic, col_ren_dev, col_fin_m, col_del_m = st.columns([1.5, 0.5, 0.5, 1.5, 1.5, 1, 1])
         
         with col_sel_m:
             id_mkt = st.selectbox("Selecciona ID:", df_marketing['ID'].unique(), key="gest_mkt")
+        with col_up_m:
+            st.write(""); st.write("")
+            if st.button("⬆️", key="up_m"):
+                df_marketing = mover_fila(df_marketing, id_mkt, 'up')
+                conn_marketing.update(data=df_marketing); st.rerun()
+        with col_down_m:
+            st.write(""); st.write("")
+            if st.button("⬇️", key="dw_m"):
+                df_marketing = mover_fila(df_marketing, id_mkt, 'down')
+                conn_marketing.update(data=df_marketing); st.rerun()
             
-        with col_renovar_lic:
+        with col_ren_lic:
             with st.form("form_renovar_licencia", clear_on_submit=True):
-                dias_extra = st.number_input("Días de contraseña extra", min_value=1, step=1, value=1)
-                
-                if st.form_submit_button("🔑 Sumar Días a Licencia"):
+                dias_extra = st.number_input("+ Días Licencia", min_value=1, step=1, value=1)
+                if st.form_submit_button("🔑 Sumar Licencia"):
                     idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
-                    
-                    # Candado: Validar si este equipo no maneja licencia
                     if str(df_marketing.at[idx, 'Vencimiento Licencia']).strip() == "" and str(df_marketing.at[idx, 'Dias de licencia']).strip() == "":
-                        st.warning("⚠️ Este equipo fue registrado como 'Otro / Particular' y no maneja fechas de licencia de software.")
+                        st.warning("⚠️ No maneja licencia.")
                     else:
-                        try:
-                            venc_actual = datetime.strptime(str(df_marketing.at[idx, 'Vencimiento Licencia']), '%Y-%m-%d').date()
-                        except:
-                            venc_actual = hoy
-                            
+                        try: venc_actual = datetime.strptime(str(df_marketing.at[idx, 'Vencimiento Licencia']), '%Y-%m-%d').date()
+                        except: venc_actual = hoy
                         nuevo_venc = venc_actual + timedelta(days=dias_extra)
+                        
+                        registrar_auditoria([{'modulo':'Marketing', 'id':id_mkt, 'campo':'Vencimiento Licencia', 'ant':str(venc_actual), 'nvo':str(nuevo_venc)}])
                         df_marketing.at[idx, 'Vencimiento Licencia'] = str(nuevo_venc)
                         df_marketing.at[idx, 'Dias de licencia'] = str((nuevo_venc - hoy).days)
-                        
-                        conn_marketing.update(data=df_marketing)
-                        st.success(f"Se han agregado {dias_extra} días a la licencia.")
-                        st.rerun()
+                        conn_marketing.update(data=df_marketing); st.success("Licencia extendida."); st.rerun()
 
-        with col_renovar_dev:
+        with col_ren_dev:
             with st.form("form_renovar_devolucion", clear_on_submit=True):
-                dias_extra_dev = st.number_input("Días de préstamo extra", min_value=1, step=1, value=1)
-                
-                if st.form_submit_button("📦 Sumar Días a Devolución"):
+                dias_extra_dev = st.number_input("+ Días Físicos", min_value=1, step=1, value=1)
+                if st.form_submit_button("📦 Sumar Devolución"):
                     idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
-                    
-                    try:
-                        fecha_dev_actual = datetime.strptime(str(df_marketing.at[idx, 'Fecha de finalizacion']), '%Y-%m-%d').date()
-                    except:
-                        fecha_dev_actual = hoy
-                        
+                    try: fecha_dev_actual = datetime.strptime(str(df_marketing.at[idx, 'Fecha de finalizacion']), '%Y-%m-%d').date()
+                    except: fecha_dev_actual = hoy
                     nueva_fecha_dev = fecha_dev_actual + timedelta(days=dias_extra_dev)
-                    df_marketing.at[idx, 'Fecha de finalizacion'] = str(nueva_fecha_dev)
                     
-                    conn_marketing.update(data=df_marketing)
-                    st.success(f"Se han agregado {dias_extra_dev} días a la fecha de devolución.")
-                    st.rerun()
+                    registrar_auditoria([{'modulo':'Marketing', 'id':id_mkt, 'campo':'Fecha de finalizacion', 'ant':str(fecha_dev_actual), 'nvo':str(nueva_fecha_dev)}])
+                    df_marketing.at[idx, 'Fecha de finalizacion'] = str(nueva_fecha_dev)
+                    conn_marketing.update(data=df_marketing); st.success("Devolución extendida."); st.rerun()
                 
         with col_fin_m:
             st.write(""); st.write("")
-            if st.button("✅ Finalizar Préstamo"):
+            if st.button("✅ Finalizar"):
                 idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
+                registrar_auditoria([{'modulo':'Marketing', 'id':id_mkt, 'campo':'Estado', 'ant':df_marketing.at[idx, 'Estado'], 'nvo':'Finalizado'}])
                 df_marketing.at[idx, 'Estado'] = 'Finalizado'
-                conn_marketing.update(data=df_marketing)
-                st.success("Préstamo finalizado con éxito.")
-                st.rerun()
+                conn_marketing.update(data=df_marketing); st.success("Préstamo finalizado."); st.rerun()
                 
         if st.session_state['rol'] == 'Admin':
             with col_del_m:
                 st.write(""); st.write("")
-                if st.button("🗑️ Borrar Préstamo"):
+                if st.button("🗑️ Borrar"):
                     eliminar_registro_gsheets(conn_marketing, df_marketing, id_mkt)
-                    st.success("Préstamo eliminado permanentemente de la nube.")
-                    st.rerun()
+                    st.success("Préstamo eliminado."); st.rerun()
     else:
         st.info("No hay préstamos registrados actualmente.")
+
+# ==========================================
+# DIVISIÓN: EVENTOS
+# ==========================================
+elif division == MENU_EVE:
+    st.header("📅 Calendario de Eventos")
+    cols_eve = ["ID", "Nombre del evento", "Distribuidor", "Fecha de inicio", "Fecha de termino", "Creado por"]
+    
+    try:
+        df_eventos = conn_marketing.read(worksheet="Eventos", ttl=0)
+        df_eventos = preparar_df(df_eventos, cols_eve).fillna("")
+    except:
+        df_eventos = pd.DataFrame(columns=cols_eve)
+        
+    tab_reg_e, tab_edit_e = st.tabs(["➕ Registrar Evento", "✏️ Editar Evento"])
+    
+    with tab_reg_e:
+        with st.form("form_eventos", clear_on_submit=True):
+            ev_nombre = st.text_input("Nombre del evento")
+            ev_dist = st.text_input("Distribuidor")
+            col1, col2 = st.columns(2)
+            with col1: ev_ini = st.date_input("Fecha de inicio")
+            with col2: ev_fin = st.date_input("Fecha de término")
+            
+            if st.form_submit_button("Guardar Evento"):
+                nuevo_id = int(df_eventos['ID'].max() + 1) if not df_eventos.empty else 1
+                nuevo_reg = pd.DataFrame([{"ID": nuevo_id, "Nombre del evento": ev_nombre, "Distribuidor": ev_dist, "Fecha de inicio": str(ev_ini), "Fecha de termino": str(ev_fin), "Creado por": st.session_state['usuario']}])
+                conn_marketing.update(worksheet="Eventos", data=pd.concat([df_eventos, nuevo_reg], ignore_index=True))
+                st.success("Evento registrado."); st.rerun()
+                
+    with tab_edit_e:
+        if not df_eventos.empty:
+            id_ed_e = st.selectbox("Selecciona ID a editar:", df_eventos['ID'].unique(), key="edit_sel_e")
+            if id_ed_e:
+                idx = df_eventos.index[df_eventos['ID'] == id_ed_e].tolist()[0]
+                with st.form("form_edit_e"):
+                    nomb_ed = st.text_input("Nombre", value=df_eventos.at[idx, 'Nombre del evento'])
+                    dist_ed = st.text_input("Distribuidor", value=df_eventos.at[idx, 'Distribuidor'])
+                    
+                    if st.form_submit_button("Guardar Edición"):
+                        cambios = []
+                        campos_ver = [('Nombre del evento', nomb_ed), ('Distribuidor', dist_ed)]
+                        for col, nvo_val in campos_ver:
+                            ant_val = str(df_eventos.at[idx, col])
+                            if ant_val != str(nvo_val):
+                                cambios.append({'modulo':'Eventos', 'id':id_ed_e, 'campo':col, 'ant':ant_val, 'nvo':str(nvo_val)})
+                                df_eventos.at[idx, col] = str(nvo_val)
+                        
+                        if cambios:
+                            registrar_auditoria(cambios)
+                            conn_marketing.update(worksheet="Eventos", data=df_eventos)
+                            st.success("Cambios guardados."); st.rerun()
+
+    st.subheader("Eventos Programados")
+    if not df_eventos.empty:
+        st.dataframe(df_eventos, use_container_width=True, hide_index=True)
+        st.write("### ⚙️ Gestionar Eventos")
+        col_sel, col_up, col_dw, col_del = st.columns([2, 1, 1, 2])
+        with col_sel:
+            id_gest_e = st.selectbox("Selecciona ID:", df_eventos['ID'].unique(), key="gest_eve")
+        with col_up:
+            st.write(""); st.write("")
+            if st.button("⬆️", key="up_e"):
+                df_eventos = mover_fila(df_eventos, id_gest_e, 'up')
+                conn_marketing.update(worksheet="Eventos", data=df_eventos); st.rerun()
+        with col_dw:
+            st.write(""); st.write("")
+            if st.button("⬇️", key="dw_e"):
+                df_eventos = mover_fila(df_eventos, id_gest_e, 'down')
+                conn_marketing.update(worksheet="Eventos", data=df_eventos); st.rerun()
+        if st.session_state['rol'] == 'Admin':
+            with col_del:
+                st.write(""); st.write("")
+                if st.button("🗑️ Borrar Evento"):
+                    df_nuevo = df_eventos[df_eventos['ID'] != id_gest_e].copy()
+                    df_nuevo['ID'] = range(1, len(df_nuevo) + 1)
+                    if len(df_eventos) - len(df_nuevo) > 0:
+                        filas_vacias = pd.DataFrame([[""] * len(df_eventos.columns)], columns=df_eventos.columns)
+                        conn_marketing.update(worksheet="Eventos", data=pd.concat([df_nuevo, filas_vacias], ignore_index=True))
+                    else: conn_marketing.update(worksheet="Eventos", data=df_nuevo)
+                    st.success("Evento eliminado."); st.rerun()
+    else:
+        st.info("No hay eventos registrados.")
 
 # ==========================================
 # DIVISIÓN: PANEL DE USUARIOS (SOLO ADMIN)
 # ==========================================
 elif division == MENU_USR:
-    st.header("Gestión de Usuarios del Sistema")
-    st.info("Solo los administradores tienen acceso a este panel.")
+    st.header("Gestión de Usuarios")
     
+    df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
+    st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
+    
+    with st.expander("➕ Crear Nuevo Usuario", expanded=False):
+        with st.form("nuevo_usuario", clear_on_submit=True):
+            nuevo_user = st.text_input("Nombre de Usuario")
+            nuevo_pass = st.text_input("Contraseña")
+            nuevo_rol = st.selectbox("Rol", ["Usuario", "Admin"])
+            
+            if st.form_submit_button("Crear Usuario"):
+                if nuevo_user and nuevo_pass:
+                    fila_user = pd.DataFrame([{"Usuario": str(nuevo_user).strip(), "Password": str(nuevo_pass).strip(), "Rol": str(nuevo_rol).strip(), "Ultimo Acceso": ""}])
+                    conn_servicio.update(worksheet="Usuarios", data=pd.concat([df_usuarios, fila_user], ignore_index=True))
+                    st.success(f"Usuario '{nuevo_user}' creado."); st.rerun()
+                else:
+                    st.error("Por favor, llena todos los campos.")
+                    
+    st.markdown("---")
+    st.subheader("🕵️‍♂️ Registro de Auditoría (Cambios realizados)")
     try:
-        df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
-        st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
-        
-        with st.expander("➕ Crear Nuevo Usuario", expanded=True):
-            with st.form("nuevo_usuario", clear_on_submit=True):
-                nuevo_user = st.text_input("Nombre de Usuario")
-                nuevo_pass = st.text_input("Contraseña")
-                nuevo_rol = st.selectbox("Rol", ["Usuario", "Admin"])
-                
-                if st.form_submit_button("Crear Usuario"):
-                    if nuevo_user and nuevo_pass:
-                        fila_user = pd.DataFrame([{"Usuario": str(nuevo_user).strip(), "Password": str(nuevo_pass).strip(), "Rol": str(nuevo_rol).strip()}])
-                        conn_servicio.update(worksheet="Usuarios", data=pd.concat([df_usuarios, fila_user], ignore_index=True))
-                        st.success(f"Usuario '{nuevo_user}' creado con éxito.")
-                        st.rerun()
-                    else:
-                        st.error("Por favor, llena todos los campos.")
-    except Exception as e:
-        st.error("No se pudo cargar la pestaña de Usuarios. Asegúrate de que exista en tu archivo de Excel de Servicio.")
+        df_auditoria = conn_servicio.read(worksheet="Auditoria", ttl=0).dropna(how='all')
+        if not df_auditoria.empty:
+            st.dataframe(df_auditoria, use_container_width=True, hide_index=True)
+        else:
+            st.info("Aún no hay registros de cambios.")
+    except:
+        st.info("La tabla de Auditoria aún no se ha creado o está vacía.")
