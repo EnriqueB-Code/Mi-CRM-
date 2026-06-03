@@ -102,6 +102,8 @@ def preparar_df(df, columnas):
             df[col] = ""
     if not df.empty and 'ID' in df.columns:
         df['ID'] = pd.to_numeric(df['ID'], errors='coerce').fillna(0).astype(int)
+        # Filtra y destruye cualquier fila fantasma sin ID para evitar huecos en la numeración
+        df = df[df['ID'] > 0].reset_index(drop=True)
     return df
 
 def color_filas(row):
@@ -124,11 +126,16 @@ def limpiar_decimales(valor):
 
 def eliminar_registro_gsheets(conexion, df_original, id_a_borrar, nombre_pestana=None):
     df_nuevo = df_original[df_original['ID'] != id_a_borrar].copy()
+    
+    # Recalcular IDs de las filas reales para que siempre sean consecutivos
+    df_nuevo['ID'] = range(1, len(df_nuevo) + 1)
+    
     diferencia = len(df_original) - len(df_nuevo)
     if diferencia > 0:
+        # Se crean las filas en blanco para limpiar Google Sheets, PERO sin asignarles un número de ID
         filas_vacias = pd.DataFrame([[""] * len(df_original.columns)] * diferencia, columns=df_original.columns)
         df_escritura = pd.concat([df_nuevo, filas_vacias], ignore_index=True)
-        df_escritura['ID'] = range(1, len(df_escritura) + 1)
+        
         if nombre_pestana:
             conexion.update(worksheet=nombre_pestana, data=df_escritura)
         else:
