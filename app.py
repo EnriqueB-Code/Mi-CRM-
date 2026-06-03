@@ -102,7 +102,6 @@ def preparar_df(df, columnas):
             df[col] = ""
     if not df.empty and 'ID' in df.columns:
         df['ID'] = pd.to_numeric(df['ID'], errors='coerce').fillna(0).astype(int)
-        # Filtra y destruye cualquier fila fantasma sin ID para evitar huecos en la numeración
         df = df[df['ID'] > 0].reset_index(drop=True)
     return df
 
@@ -112,6 +111,8 @@ def color_filas(row):
         return ['background-color: #d4edda; color: #155724;'] * len(row)
     elif estado == 'Sin Seguimiento (Alerta)':
         return ['background-color: #f8d7da; color: #721c24;'] * len(row)
+    elif estado == 'Pendiente':
+        return ['background-color: #fff3cd; color: #856404;'] * len(row) # Color amarillo para Pendiente
     return [''] * len(row)
 
 def limpiar_serie(valor):
@@ -127,12 +128,10 @@ def limpiar_decimales(valor):
 def eliminar_registro_gsheets(conexion, df_original, id_a_borrar, nombre_pestana=None):
     df_nuevo = df_original[df_original['ID'] != id_a_borrar].copy()
     
-    # Recalcular IDs de las filas reales para que siempre sean consecutivos
     df_nuevo['ID'] = range(1, len(df_nuevo) + 1)
     
     diferencia = len(df_original) - len(df_nuevo)
     if diferencia > 0:
-        # Se crean las filas en blanco para limpiar Google Sheets, PERO sin asignarles un número de ID
         filas_vacias = pd.DataFrame([[""] * len(df_original.columns)] * diferencia, columns=df_original.columns)
         df_escritura = pd.concat([df_nuevo, filas_vacias], ignore_index=True)
         
@@ -207,7 +206,8 @@ hoy = date.today()
 # ==========================================
 if division == MENU_SERV:
     st.header("Gestión de Servicio")
-    cols_servicio = ["ID", "Cliente", "Caso reportado", "Modelo", "Numero de serie", "Seguimiento con fabrica", "Solucion del problema", "Fecha de reporte", "Fecha de cierre", "Estatus", "Creado por"]
+    # SE AGREGÓ LA COLUMNA "País"
+    cols_servicio = ["ID", "Cliente", "País", "Caso reportado", "Modelo", "Numero de serie", "Seguimiento con fabrica", "Solucion del problema", "Fecha de reporte", "Fecha de cierre", "Estatus", "Creado por"]
     
     df_servicio = conn_servicio.read(ttl=0)
     df_servicio = preparar_df(df_servicio, cols_servicio).fillna("")
@@ -218,7 +218,8 @@ if division == MENU_SERV:
     hubo_cambios = False
     if not df_servicio.empty:
         for index, row in df_servicio.iterrows():
-            if str(row['Estatus']) != 'Finalizado' and str(row['Fecha de reporte']).strip() != "":
+            # Excluimos "Pendiente" y "Finalizado" de la alerta automática de 3 días
+            if str(row['Estatus']) not in ['Finalizado', 'Pendiente'] and str(row['Fecha de reporte']).strip() != "":
                 try:
                     fecha_rep = datetime.strptime(str(row['Fecha de reporte']), '%Y-%m-%d').date()
                     dias_pasados = (hoy - fecha_rep).days
@@ -253,6 +254,7 @@ if division == MENU_SERV:
                     registrar_auditoria([{'modulo': 'Servicio', 'id': id_actualizar, 'campo': 'Seguimiento con fabrica', 'ant': seg_actual, 'nvo': texto_final}])
                     
                     df_servicio.at[idx, 'Seguimiento con fabrica'] = texto_final
+                    # Si agregan un seguimiento, lo regresamos a Activo por defecto
                     df_servicio.at[idx, 'Estatus'] = 'Activo'
                     conn_servicio.update(data=df_servicio)
                     st.session_state['serie_key'] += 1 
@@ -260,7 +262,12 @@ if division == MENU_SERV:
                 st.markdown("---")
             
             with st.form("nuevo_caso", clear_on_submit=True):
-                cliente = st.text_input("Cliente")
+                col_c1, col_c2 = st.columns(2)
+                with col_c1:
+                    cliente = st.text_input("Cliente")
+                with col_c2:
+                    pais = st.text_input("País")
+                    
                 modelo_seleccionado = st.selectbox("Modelo del Equipo", LISTA_EQUIPOS)
                 modelo_otro = st.text_input("Especifica el modelo (Solo si elegiste 'Otro / Particular')")
                 caso = st.text_area("Caso Reportado")
@@ -272,7 +279,7 @@ if division == MENU_SERV:
                     modelo_final = modelo_otro.strip() if modelo_seleccionado == "Otro / Particular" and modelo_otro.strip() != "" else modelo_seleccionado
                     nuevo_id = int(df_servicio['ID'].max() + 1) if not df_servicio.empty else 1
                     nuevo_registro = pd.DataFrame([{
-                        "ID": nuevo_id, "Cliente": cliente, "Caso reportado": caso, "Modelo": modelo_final, 
+                        "ID": nuevo_id, "Cliente": cliente, "País": pais, "Caso reportado": caso, "Modelo": modelo_final, 
                         "Numero de serie": num_serie_str, "Seguimiento con fabrica": nuevo_seg_fabrica, 
                         "Solucion del problema": nueva_solucion, "Fecha de reporte": str(fecha_reporte), 
                         "Fecha de cierre": "", "Estatus": "Activo", "Creado por": st.session_state['usuario']
@@ -287,6 +294,7 @@ if division == MENU_SERV:
                 idx = df_servicio.index[df_servicio['ID'] == id_ed_s].tolist()[0]
                 with st.form("form_edit_s"):
                     cl_ed = st.text_input("Cliente", value=df_servicio.at[idx, 'Cliente'])
+                    pais_ed = st.text_input("País", value=df_servicio.at[idx, 'País'])
                     mod_act = df_servicio.at[idx, 'Modelo']
                     mod_ed = st.selectbox("Modelo", LISTA_EQUIPOS, index=LISTA_EQUIPOS.index(mod_act) if mod_act in LISTA_EQUIPOS else LISTA_EQUIPOS.index("Otro / Particular"))
                     mod_o_ed = st.text_input("Especifica (si es Otro)", value=mod_act if mod_act not in LISTA_EQUIPOS else "")
@@ -294,12 +302,15 @@ if division == MENU_SERV:
                     caso_ed = st.text_area("Caso", value=df_servicio.at[idx, 'Caso reportado'])
                     seg_ed = st.text_area("Seguimiento", value=df_servicio.at[idx, 'Seguimiento con fabrica'])
                     sol_ed = st.text_area("Solución", value=df_servicio.at[idx, 'Solucion del problema'])
-                    est_ed = st.selectbox("Estatus", ["Activo", "Sin Seguimiento (Alerta)", "Finalizado"], index=["Activo", "Sin Seguimiento (Alerta)", "Finalizado"].index(df_servicio.at[idx, 'Estatus']) if df_servicio.at[idx, 'Estatus'] in ["Activo", "Sin Seguimiento (Alerta)", "Finalizado"] else 0)
+                    
+                    opciones_estatus = ["Activo", "Pendiente", "Sin Seguimiento (Alerta)", "Finalizado"]
+                    estatus_actual = df_servicio.at[idx, 'Estatus']
+                    est_ed = st.selectbox("Estatus", opciones_estatus, index=opciones_estatus.index(estatus_actual) if estatus_actual in opciones_estatus else 0)
 
                     if st.form_submit_button("Guardar Edición"):
                         modelo_f_ed = mod_o_ed.strip() if mod_ed == "Otro / Particular" and mod_o_ed.strip() != "" else mod_ed
                         cambios = []
-                        campos_ver = [('Cliente', cl_ed), ('Modelo', modelo_f_ed), ('Numero de serie', ns_ed), 
+                        campos_ver = [('Cliente', cl_ed), ('País', pais_ed), ('Modelo', modelo_f_ed), ('Numero de serie', ns_ed), 
                                       ('Caso reportado', caso_ed), ('Seguimiento con fabrica', seg_ed), 
                                       ('Solucion del problema', sol_ed), ('Estatus', est_ed)]
                         
@@ -321,7 +332,8 @@ if division == MENU_SERV:
         st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         st.write("### ⚙️ Gestionar Casos")
         
-        col_sel, col_up, col_down, col_fin, col_del = st.columns([2, 1, 1, 1.5, 1])
+        # Agregamos la columna para el botón "Pendiente"
+        col_sel, col_up, col_down, col_pend, col_fin, col_del = st.columns([2, 1, 1, 1.5, 1.5, 1])
         with col_sel:
             id_gestion = st.selectbox("Selecciona ID:", df_servicio['ID'].unique(), key="gest_serv")
         with col_up:
@@ -334,6 +346,15 @@ if division == MENU_SERV:
             if st.button("⬇️ Bajar", key="dw_s"):
                 df_servicio = mover_fila(df_servicio, id_gestion, 'down')
                 conn_servicio.update(data=df_servicio); st.rerun()
+                
+        with col_pend:
+            st.write(""); st.write("")
+            if st.button("⏳ Pendiente"):
+                idx = df_servicio.index[df_servicio['ID'] == id_gestion].tolist()[0]
+                registrar_auditoria([{'modulo':'Servicio', 'id':id_gestion, 'campo':'Estatus', 'ant':df_servicio.at[idx, 'Estatus'], 'nvo':'Pendiente'}])
+                df_servicio.at[idx, 'Estatus'] = 'Pendiente'
+                conn_servicio.update(data=df_servicio); st.success("Caso marcado como Pendiente."); st.rerun()
+                
         with col_fin:
             st.write(""); st.write("")
             if st.button("✅ Finalizar Caso"):
