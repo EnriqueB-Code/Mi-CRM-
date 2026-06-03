@@ -173,6 +173,7 @@ def registrar_auditoria(cambios):
     conn_servicio.update(worksheet="Auditoria", data=df_final)
 
 # Nombres estables de menú
+MENU_DASH = "📊 Dashboard General"
 MENU_SERV = "🔧 Servicio Técnico"
 MENU_MKT = "📈 Marketing"
 MENU_EVE = "📅 Calendario de Eventos"
@@ -190,7 +191,7 @@ if st.sidebar.button("Cerrar Sesión"):
     st.rerun()
 
 st.sidebar.markdown("---")
-opciones_menu = [MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO]
+opciones_menu = [MENU_DASH, MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO]
 
 if st.session_state['rol'] == 'Admin':
     opciones_menu.append(MENU_USR)
@@ -202,9 +203,73 @@ st.title("Panel de Control Sincronizado")
 hoy = date.today()
 
 # ==========================================
+# DIVISIÓN: DASHBOARD GENERAL (FASE A)
+# ==========================================
+if division == MENU_DASH:
+    st.header("Resumen Operativo en Tiempo Real")
+    
+    # Intentar leer datos para el dashboard
+    try:
+        df_serv_dash = conn_servicio.read(ttl=0).dropna(how='all')
+    except:
+        df_serv_dash = pd.DataFrame()
+        
+    try:
+        df_mkt_dash = conn_marketing.read(ttl=0).dropna(how='all')
+    except:
+        df_mkt_dash = pd.DataFrame()
+
+    # Calcular KPIs
+    casos_activos = 0
+    casos_pendientes = 0
+    equipos_prestados = 0
+
+    if not df_serv_dash.empty and 'Estatus' in df_serv_dash.columns:
+        casos_activos = len(df_serv_dash[df_serv_dash['Estatus'].isin(['Activo', 'Sin Seguimiento (Alerta)'])])
+        casos_pendientes = len(df_serv_dash[df_serv_dash['Estatus'] == 'Pendiente'])
+        
+    if not df_mkt_dash.empty and 'Estado' in df_mkt_dash.columns:
+        equipos_prestados = len(df_mkt_dash[df_mkt_dash['Estado'] == 'Activo'])
+
+    # Fila de Tarjetas (Metrics)
+    col1, col2, col3 = st.columns(3)
+    col1.metric(label="🔧 Casos de Servicio (Activos)", value=casos_activos)
+    col2.metric(label="📦 Equipos a Préstamo (Marketing)", value=equipos_prestados)
+    col3.metric(label="⏳ Casos en Espera (Pendientes)", value=casos_pendientes)
+    
+    st.markdown("---")
+    
+    # Fila de Gráficos
+    col_chart1, col_chart2 = st.columns(2)
+    
+    with col_chart1:
+        st.subheader("📈 Top Modelos con Fallas Reportadas")
+        if not df_serv_dash.empty and 'Modelo' in df_serv_dash.columns:
+            # Filtrar equipos que tengan algún registro y agrupar
+            modelos_count = df_serv_dash[df_serv_dash['Modelo'].str.strip() != ''].groupby('Modelo').size().sort_values(ascending=False).head(5)
+            if not modelos_count.empty:
+                st.bar_chart(modelos_count)
+            else:
+                st.info("Aún no hay suficientes datos registrados.")
+        else:
+            st.info("Aún no hay suficientes datos registrados.")
+            
+    with col_chart2:
+        st.subheader("👥 Préstamos por KOL (Activos e Históricos)")
+        if not df_mkt_dash.empty and 'KOL' in df_mkt_dash.columns:
+            kols_count = df_mkt_dash[df_mkt_dash['KOL'].str.strip() != ''].groupby('KOL').size().sort_values(ascending=False).head(5)
+            if not kols_count.empty:
+                st.bar_chart(kols_count)
+            else:
+                st.info("Aún no hay suficientes datos registrados.")
+        else:
+            st.info("Aún no hay suficientes datos registrados.")
+
+
+# ==========================================
 # DIVISIÓN: SERVICIO TÉCNICO
 # ==========================================
-if division == MENU_SERV:
+elif division == MENU_SERV:
     st.header("Gestión de Servicio")
     cols_servicio = ["ID", "Cliente", "País", "Caso reportado", "Modelo", "Numero de serie", "Seguimiento con fabrica", "Solucion del problema", "Fecha de reporte", "Fecha de cierre", "Estatus", "Creado por"]
     
@@ -231,11 +296,9 @@ if division == MENU_SERV:
                         df_servicio.at[index, 'Estatus'] = 'Activo'
                         hubo_cambios = True
                 except ValueError: pass
-        # Solo actualizamos el excel automáticamente si el rol NO es Solo Lectura
         if hubo_cambios and st.session_state['rol'] != 'Solo Lectura': 
             conn_servicio.update(data=df_servicio)
 
-    # Solo mostrar los formularios de edición y registro si NO es Solo Lectura
     if st.session_state['rol'] != 'Solo Lectura':
         tab_reg, tab_edit = st.tabs(["➕ Registrar / Actualizar", "✏️ Editar Caso"])
         
@@ -332,7 +395,6 @@ if division == MENU_SERV:
     if not df_servicio.empty:
         st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
-        # Solo mostrar las opciones de gestión si NO es Solo Lectura
         if st.session_state['rol'] != 'Solo Lectura':
             st.write("### ⚙️ Gestionar Casos")
             col_sel, col_up, col_down, col_pend, col_fin, col_del = st.columns([2, 1, 1, 1.5, 1.5, 1])
@@ -415,11 +477,9 @@ elif division == MENU_MKT:
                         elif dias_lic_restantes < 0: st.error(f"🚫 **LICENCIA CADUCADA:** Contraseña de '{row['Equipo']}' de '{row['KOL']}' venció hace {abs(dias_lic_restantes)} días.")
                     except ValueError: pass
                     
-        # Evitar autoguardado si es solo lectura
         if hubo_cambios_mkt and st.session_state['rol'] != 'Solo Lectura': 
             conn_marketing.update(data=df_marketing)
 
-    # Ocultar formularios de registro/edición para Solo Lectura
     if st.session_state['rol'] != 'Solo Lectura':
         tab_reg_m, tab_edit_m = st.tabs(["➕ Registrar Préstamo", "✏️ Editar Préstamo"])
 
@@ -496,7 +556,6 @@ elif division == MENU_MKT:
         columnas_visibles = [c for c in df_marketing.columns if c != "Vencimiento Licencia"]
         st.dataframe(df_marketing[columnas_visibles].style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
-        # Ocultar zona de gestión para Solo Lectura
         if st.session_state['rol'] != 'Solo Lectura':
             st.write("### ⚙️ Gestionar Préstamos y Licencias")
             
@@ -575,7 +634,6 @@ elif division == MENU_EVE:
     except:
         df_eventos = pd.DataFrame(columns=cols_eve)
         
-    # Ocultar pestañas de creación/edición para Solo Lectura
     if st.session_state['rol'] != 'Solo Lectura':
         tab_reg_e, tab_edit_e = st.tabs(["➕ Registrar Evento", "✏️ Editar Evento"])
         
@@ -620,7 +678,6 @@ elif division == MENU_EVE:
     if not df_eventos.empty:
         st.dataframe(df_eventos, use_container_width=True, hide_index=True)
         
-        # Ocultar opciones de gestión para Solo Lectura
         if st.session_state['rol'] != 'Solo Lectura':
             st.write("### ⚙️ Gestionar Eventos")
             col_sel, col_up, col_dw, col_del = st.columns([2, 1, 1, 2])
@@ -882,7 +939,7 @@ elif division == MENU_DEMO:
             st.warning("Estos equipos no aparecen arriba porque actualmente están asignados a un KOL en Marketing.")
             st.dataframe(df_demo_prestados, use_container_width=True, hide_index=True)
 
-    # 4. OPERACIONES DEL CATÁLOGO (ALTAS, BAJAS, CAMBIOS) - Ocultas para Solo Lectura
+    # 4. OPERACIONES DEL CATÁLOGO
     if st.session_state['rol'] != 'Solo Lectura':
         st.write("---")
         st.write("### ⚙️ Administración de Catálogo de Equipos Demo")
@@ -975,7 +1032,6 @@ elif division == MENU_USR:
         with st.form("nuevo_usuario", clear_on_submit=True):
             nuevo_user = st.text_input("Nombre de Usuario")
             nuevo_pass = st.text_input("Contraseña")
-            # SE AÑADIÓ EL ROL DE SOLO LECTURA AL MENÚ DESPLEGABLE
             nuevo_rol = st.selectbox("Rol", ["Usuario", "Admin", "Solo Lectura"])
             
             if st.form_submit_button("Crear Usuario"):
