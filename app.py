@@ -206,9 +206,15 @@ hoy = date.today()
 # DIVISIÓN: DASHBOARD GENERAL (FASE A)
 # ==========================================
 if division == MENU_DASH:
-    st.header("Resumen Operativo en Tiempo Real")
+    col_titulo, col_boton = st.columns([3, 1])
+    with col_titulo:
+        st.header("Resumen Operativo en Tiempo Real")
     
-    # Intentar leer datos para el dashboard
+    # 1. Filtros de Tiempo
+    filtro_tiempo = st.radio("⏳ Analizar resultados por:", ["Todo el histórico", "Este Año", "Este Mes", "Hoy (Día)"], horizontal=True)
+    st.markdown("---")
+
+    # 2. Leer Bases de Datos
     try:
         df_serv_dash = conn_servicio.read(ttl=0).dropna(how='all')
     except:
@@ -219,7 +225,29 @@ if division == MENU_DASH:
     except:
         df_mkt_dash = pd.DataFrame()
 
-    # Calcular KPIs
+    # 3. Formatear y Filtrar Fechas
+    if not df_serv_dash.empty and 'Fecha de reporte' in df_serv_dash.columns:
+        df_serv_dash['Fecha_dt'] = pd.to_datetime(df_serv_dash['Fecha de reporte'], errors='coerce')
+    else:
+        df_serv_dash['Fecha_dt'] = pd.NaT
+
+    if not df_mkt_dash.empty and 'Fecha de inicio' in df_mkt_dash.columns:
+        df_mkt_dash['Fecha_dt'] = pd.to_datetime(df_mkt_dash['Fecha de inicio'], errors='coerce')
+    else:
+        df_mkt_dash['Fecha_dt'] = pd.NaT
+
+    # Aplicar Filtro seleccionado
+    if filtro_tiempo == "Este Año":
+        df_serv_dash = df_serv_dash[df_serv_dash['Fecha_dt'].dt.year == hoy.year]
+        df_mkt_dash = df_mkt_dash[df_mkt_dash['Fecha_dt'].dt.year == hoy.year]
+    elif filtro_tiempo == "Este Mes":
+        df_serv_dash = df_serv_dash[(df_serv_dash['Fecha_dt'].dt.year == hoy.year) & (df_serv_dash['Fecha_dt'].dt.month == hoy.month)]
+        df_mkt_dash = df_mkt_dash[(df_mkt_dash['Fecha_dt'].dt.year == hoy.year) & (df_mkt_dash['Fecha_dt'].dt.month == hoy.month)]
+    elif filtro_tiempo == "Hoy (Día)":
+        df_serv_dash = df_serv_dash[df_serv_dash['Fecha_dt'].dt.date == hoy]
+        df_mkt_dash = df_mkt_dash[df_mkt_dash['Fecha_dt'].dt.date == hoy]
+
+    # 4. Calcular KPIs Filtrados
     casos_activos = 0
     casos_pendientes = 0
     equipos_prestados = 0
@@ -231,37 +259,59 @@ if division == MENU_DASH:
     if not df_mkt_dash.empty and 'Estado' in df_mkt_dash.columns:
         equipos_prestados = len(df_mkt_dash[df_mkt_dash['Estado'] == 'Activo'])
 
-    # Fila de Tarjetas (Metrics)
+    # Mostrar Tarjetas (Metrics)
     col1, col2, col3 = st.columns(3)
     col1.metric(label="🔧 Casos de Servicio (Activos)", value=casos_activos)
     col2.metric(label="📦 Equipos a Préstamo (Marketing)", value=equipos_prestados)
     col3.metric(label="⏳ Casos en Espera (Pendientes)", value=casos_pendientes)
     
+    # 5. Botón de Exportación EXCLUSIVO PARA ADMIN
+    with col_boton:
+        st.write("") # Espacio para alinear
+        if st.session_state['rol'] == 'Admin':
+            # Preparamos el resumen para descargar
+            resumen_dict = {
+                "Métrica": ["Casos de Servicio Activos", "Equipos a Préstamo", "Casos Pendientes"],
+                "Total": [casos_activos, equipos_prestados, casos_pendientes],
+                "Filtro Aplicado": [filtro_tiempo, filtro_tiempo, filtro_tiempo],
+                "Fecha de Generación": [str(hoy), str(hoy), str(hoy)]
+            }
+            df_resumen_export = pd.DataFrame(resumen_dict)
+            csv_data = df_resumen_export.to_csv(index=False).encode('utf-8')
+            
+            st.download_button(
+                label="📄 Generar Reporte (CSV)",
+                data=csv_data,
+                file_name=f"Reporte_Dashboard_{hoy}.csv",
+                mime="text/csv",
+                type="primary",
+                use_container_width=True
+            )
+
     st.markdown("---")
     
-    # Fila de Gráficos
+    # 6. Fila de Gráficos
     col_chart1, col_chart2 = st.columns(2)
     
     with col_chart1:
         st.subheader("📈 Top Modelos con Fallas Reportadas")
         if not df_serv_dash.empty and 'Modelo' in df_serv_dash.columns:
-            # Filtrar equipos que tengan algún registro y agrupar
             modelos_count = df_serv_dash[df_serv_dash['Modelo'].str.strip() != ''].groupby('Modelo').size().sort_values(ascending=False).head(5)
             if not modelos_count.empty:
                 st.bar_chart(modelos_count)
             else:
-                st.info("Aún no hay suficientes datos registrados.")
+                st.info(f"No hay registros de servicio para '{filtro_tiempo}'.")
         else:
             st.info("Aún no hay suficientes datos registrados.")
             
     with col_chart2:
-        st.subheader("👥 Préstamos por KOL (Activos e Históricos)")
+        st.subheader("👥 Préstamos por KOL")
         if not df_mkt_dash.empty and 'KOL' in df_mkt_dash.columns:
             kols_count = df_mkt_dash[df_mkt_dash['KOL'].str.strip() != ''].groupby('KOL').size().sort_values(ascending=False).head(5)
             if not kols_count.empty:
                 st.bar_chart(kols_count)
             else:
-                st.info("Aún no hay suficientes datos registrados.")
+                st.info(f"No hay registros de marketing para '{filtro_tiempo}'.")
         else:
             st.info("Aún no hay suficientes datos registrados.")
 
