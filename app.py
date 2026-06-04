@@ -2,9 +2,17 @@ import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 from datetime import date, datetime, timedelta
+import collections
+
+# Intentamos importar FPDF para los reportes. Si no está, no rompemos el programa.
+try:
+    from fpdf import FPDF
+    HAS_FPDF = True
+except ImportError:
+    HAS_FPDF = False
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Sistema de Gestión CRM", layout="wide")
+st.set_page_config(page_title="Sistema de Gestión CRM y Capacitación", layout="wide")
 
 # --- CONEXIÓN A GOOGLE SHEETS ---
 try:
@@ -38,58 +46,6 @@ LISTA_STATUS_DANADAS = [
 ]
 
 # ==========================================
-# SISTEMA DE LOGIN Y ESTADO
-# ==========================================
-if 'logeado' not in st.session_state:
-    st.session_state['logeado'] = False
-    st.session_state['usuario'] = ""
-    st.session_state['rol'] = ""
-
-if 'serie_key' not in st.session_state:
-    st.session_state['serie_key'] = 0
-
-def iniciar_sesion(usuario, password):
-    try:
-        df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
-    except Exception:
-        st.error("⚠️ No se encontró la pestaña 'Usuarios' en tu Excel de Servicio Técnico.")
-        return
-        
-    df_usuarios['Usuario'] = df_usuarios['Usuario'].astype(str).str.strip()
-    df_usuarios['Password'] = df_usuarios['Password'].astype(str).str.strip()
-    df_usuarios['Password'] = df_usuarios['Password'].apply(lambda x: x[:-2] if x.endswith('.0') else x)
-    
-    user_limpio = str(usuario).strip()
-    pass_limpia = str(password).strip()
-
-    usuario_valido = df_usuarios[(df_usuarios['Usuario'] == user_limpio) & 
-                                 (df_usuarios['Password'] == pass_limpia)]
-    
-    if not usuario_valido.empty:
-        st.session_state['logeado'] = True
-        st.session_state['usuario'] = user_limpio
-        st.session_state['rol'] = str(usuario_valido.iloc[0]['Rol']).strip()
-        
-        idx = df_usuarios.index[df_usuarios['Usuario'] == user_limpio].tolist()[0]
-        if 'Ultimo Acceso' not in df_usuarios.columns:
-            df_usuarios['Ultimo Acceso'] = ""
-        df_usuarios.at[idx, 'Ultimo Acceso'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        conn_servicio.update(worksheet="Usuarios", data=df_usuarios)
-        
-        st.rerun()
-    else:
-        st.error("❌ Usuario o contraseña incorrectos.")
-
-if not st.session_state['logeado']:
-    st.title("🔐 Acceso al Sistema CRM")
-    with st.form("login_form"):
-        user_input = st.text_input("Usuario")
-        pass_input = st.text_input("Contraseña", type="password")
-        if st.form_submit_button("Entrar"):
-            iniciar_sesion(user_input, pass_input)
-    st.stop()
-
-# ==========================================
 # FUNCIONES DE UTILIDAD Y AUDITORÍA
 # ==========================================
 def preparar_df(df, columnas):
@@ -119,22 +75,13 @@ def limpiar_serie(valor):
     val_str = str(valor).strip()
     return val_str[:-2] if val_str.endswith('.0') else val_str
 
-def limpiar_decimales(valor):
-    try:
-        return str(int(float(valor)))
-    except (ValueError, TypeError):
-        return str(valor).strip()
-
 def eliminar_registro_gsheets(conexion, df_original, id_a_borrar, nombre_pestana=None):
     df_nuevo = df_original[df_original['ID'] != id_a_borrar].copy()
-    
     df_nuevo['ID'] = range(1, len(df_nuevo) + 1)
-    
     diferencia = len(df_original) - len(df_nuevo)
     if diferencia > 0:
         filas_vacias = pd.DataFrame([[""] * len(df_original.columns)] * diferencia, columns=df_original.columns)
         df_escritura = pd.concat([df_nuevo, filas_vacias], ignore_index=True)
-        
         if nombre_pestana:
             conexion.update(worksheet=nombre_pestana, data=df_escritura)
         else:
@@ -165,42 +112,290 @@ def registrar_auditoria(cambios):
     
     logs = []
     fecha_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    usr = st.session_state['usuario']
+    usr = st.session_state.get('usuario', 'Desconocido')
     for c in cambios:
         logs.append({"Fecha": fecha_str, "Usuario": usr, "Modulo": c['modulo'], "ID Caso": c['id'], "Campo": c['campo'], "Valor Anterior": c['ant'], "Valor Nuevo": c['nvo']})
     
     df_final = pd.concat([df_aud, pd.DataFrame(logs)], ignore_index=True)
     conn_servicio.update(worksheet="Auditoria", data=df_final)
 
-# Nombres estables de menú
+# ==========================================
+# VARIABLES DE ESTADO Y LOGIN DUAL
+# ==========================================
+if 'logeado_staff' not in st.session_state:
+    st.session_state['logeado_staff'] = False
+    st.session_state['logeado_dist'] = False
+    st.session_state['usuario'] = ""
+    st.session_state['rol'] = ""
+    st.session_state['serie_key'] = 0
+
+# Variables Estado Exámenes
+if 'exam_in_progress' not in st.session_state:
+    st.session_state['exam_in_progress'] = False
+    st.session_state['q_index'] = 0
+    st.session_state['respuestas_correctas'] = 0
+    st.session_state['areas_correctas'] = []
+    st.session_state['areas_falladas'] = []
+    st.session_state['preguntas_falladas'] = []
+    st.session_state['q_start_time'] = None
+
+hoy = date.today()
+
+# --- PANTALLA DE ACCESO DUAL ---
+if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist']:
+    st.title("🛡️ Sistema de Gestión y Capacitación")
+    portal_seleccionado = st.radio("Selecciona tu área de acceso:", ["🧑‍💻 Staff CRM", "🎓 Portal de Distribuidores (Capacitación)"], horizontal=True)
+    st.markdown("---")
+    
+    if portal_seleccionado == "🧑‍💻 Staff CRM":
+        with st.form("login_staff"):
+            st.subheader("Acceso Administrativo")
+            user_input = st.text_input("Usuario")
+            pass_input = st.text_input("Contraseña", type="password")
+            if st.form_submit_button("Entrar al CRM"):
+                try:
+                    df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
+                    df_usuarios['Usuario'] = df_usuarios['Usuario'].astype(str).str.strip()
+                    df_usuarios['Password'] = df_usuarios['Password'].astype(str).str.strip()
+                    df_usuarios['Password'] = df_usuarios['Password'].apply(lambda x: x[:-2] if x.endswith('.0') else x)
+                    
+                    valido = df_usuarios[(df_usuarios['Usuario'] == str(user_input).strip()) & 
+                                         (df_usuarios['Password'] == str(pass_input).strip())]
+                    
+                    if not valido.empty:
+                        st.session_state['logeado_staff'] = True
+                        st.session_state['usuario'] = str(user_input).strip()
+                        st.session_state['rol'] = str(valido.iloc[0]['Rol']).strip()
+                        
+                        idx = df_usuarios.index[df_usuarios['Usuario'] == str(user_input).strip()].tolist()[0]
+                        if 'Ultimo Acceso' not in df_usuarios.columns: df_usuarios['Ultimo Acceso'] = ""
+                        df_usuarios.at[idx, 'Ultimo Acceso'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        conn_servicio.update(worksheet="Usuarios", data=df_usuarios)
+                        st.rerun()
+                    else:
+                        st.error("❌ Usuario o contraseña incorrectos para Staff.")
+                except Exception:
+                    st.error("Error al leer la base de datos de Usuarios.")
+    
+    elif portal_seleccionado == "🎓 Portal de Distribuidores (Capacitación)":
+        tab_log_dist, tab_reg_dist = st.tabs(["🔑 Iniciar Sesión", "📝 Crear Cuenta Nueva"])
+        
+        # Crear estructura de Usuarios Examenes si no existe
+        cols_usr_exam = ["Usuario", "Password", "Distribuidor", "Fecha_Registro"]
+        try:
+            df_usr_exam = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0)
+            df_usr_exam = preparar_df(df_usr_exam, cols_usr_exam)
+        except:
+            df_usr_exam = pd.DataFrame(columns=cols_usr_exam)
+
+        with tab_log_dist:
+            with st.form("form_log_dist"):
+                u_dist = st.text_input("Usuario Distribuidor")
+                p_dist = st.text_input("Contraseña", type="password")
+                if st.form_submit_button("Entrar a mis Exámenes"):
+                    if not df_usr_exam.empty:
+                        df_usr_exam['Usuario'] = df_usr_exam['Usuario'].astype(str).str.strip()
+                        df_usr_exam['Password'] = df_usr_exam['Password'].astype(str).str.strip()
+                        df_usr_exam['Password'] = df_usr_exam['Password'].apply(lambda x: x[:-2] if x.endswith('.0') else x)
+                        
+                        valido_dist = df_usr_exam[(df_usr_exam['Usuario'] == str(u_dist).strip()) & 
+                                                  (df_usr_exam['Password'] == str(p_dist).strip())]
+                        if not valido_dist.empty:
+                            st.session_state['logeado_dist'] = True
+                            st.session_state['usuario'] = str(u_dist).strip()
+                            st.session_state['rol'] = "Distribuidor_Examen"
+                            st.rerun()
+                        else:
+                            st.error("❌ Credenciales incorrectas. Si eres nuevo, ve a la pestaña 'Crear Cuenta'.")
+                    else:
+                        st.error("No hay usuarios registrados aún.")
+
+        with tab_reg_dist:
+            with st.form("form_reg_dist"):
+                st.info("Crea tu cuenta temporal para realizar tus evaluaciones.")
+                nvo_u_dist = st.text_input("Elige un Usuario")
+                nvo_p_dist = st.text_input("Elige una Contraseña")
+                empresa_dist = st.text_input("Empresa / Distribuidor al que perteneces")
+                
+                if st.form_submit_button("Registrarme"):
+                    if nvo_u_dist and nvo_p_dist and empresa_dist:
+                        existe = False
+                        if not df_usr_exam.empty:
+                            existe = str(nvo_u_dist).strip() in df_usr_exam['Usuario'].astype(str).str.strip().values
+                        if existe:
+                            st.error("Ese usuario ya existe. Elige otro.")
+                        else:
+                            nuevo_reg = pd.DataFrame([{
+                                "Usuario": str(nvo_u_dist).strip(),
+                                "Password": str(nvo_p_dist).strip(),
+                                "Distribuidor": str(empresa_dist).strip(),
+                                "Fecha_Registro": str(hoy)
+                            }])
+                            conn_servicio.update(worksheet="Usuarios_Examenes", data=pd.concat([df_usr_exam, nuevo_reg], ignore_index=True))
+                            st.success("Cuenta creada exitosamente. Ya puedes iniciar sesión en la pestaña de al lado.")
+                    else:
+                        st.error("Debes llenar todos los campos.")
+    st.stop()
+
+
+# ==========================================
+# MÓDULO EXCLUSIVO: PORTAL DE EXÁMENES (DISTRIBUIDORES)
+# ==========================================
+if st.session_state['logeado_dist']:
+    st.title("🎓 Portal de Evaluación y Capacitación")
+    st.write(f"Bienvenido, **{st.session_state['usuario']}**.")
+    if st.button("Cerrar Sesión"):
+        st.session_state['logeado_dist'] = False
+        st.session_state['exam_in_progress'] = False
+        st.rerun()
+    st.markdown("---")
+
+    # Leer Banco de Preguntas
+    try:
+        df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=0).dropna(how='all')
+    except:
+        st.error("No se encontró la base de datos de 'Banco_Preguntas'. Contacta al administrador.")
+        st.stop()
+
+    if df_banco.empty:
+        st.info("No hay exámenes disponibles en este momento.")
+        st.stop()
+
+    examenes_disponibles = df_banco['Examen'].dropna().unique().tolist()
+
+    if not st.session_state['exam_in_progress']:
+        st.subheader("Tus Evaluaciones Disponibles")
+        examen_sel = st.selectbox("Selecciona el examen a realizar:", examenes_disponibles)
+        
+        st.warning("⏱️ **ATENCIÓN:** Una vez que inicies, tendrás **2 minutos máximo** para responder cada pregunta. Si el temporizador llega a cero, la pregunta se calificará como incorrecta automáticamente.")
+        
+        if st.button("🚀 Comenzar Examen", type="primary"):
+            st.session_state['exam_in_progress'] = True
+            st.session_state['examen_actual'] = examen_sel
+            st.session_state['q_index'] = 0
+            st.session_state['respuestas_correctas'] = 0
+            st.session_state['areas_correctas'] = []
+            st.session_state['areas_falladas'] = []
+            st.session_state['preguntas_falladas'] = []
+            st.session_state['q_start_time'] = datetime.now()
+            st.rerun()
+
+    else:
+        # Examen en curso
+        df_examen_actual = df_banco[df_banco['Examen'] == st.session_state['examen_actual']].reset_index(drop=True)
+        total_preguntas = len(df_examen_actual)
+        q_idx = st.session_state['q_index']
+
+        if q_idx < total_preguntas:
+            pregunta_actual = df_examen_actual.iloc[q_idx]
+            
+            st.progress((q_idx) / total_preguntas)
+            st.write(f"**Pregunta {q_idx + 1} de {total_preguntas}** (Área: {pregunta_actual.get('Area_Conocimiento', 'General')})")
+            st.info("⏱️ *El temporizador interno de 120 segundos está corriendo...*")
+            
+            st.markdown(f"### {pregunta_actual['Pregunta']}")
+            
+            opciones = {
+                "A": pregunta_actual.get('Opcion_A', 'A'),
+                "B": pregunta_actual.get('Opcion_B', 'B'),
+                "C": pregunta_actual.get('Opcion_C', 'C'),
+                "D": pregunta_actual.get('Opcion_D', 'D')
+            }
+            
+            respuesta_usuario = st.radio("Selecciona tu respuesta:", ["A", "B", "C", "D"], format_func=lambda x: f"{x}) {opciones[x]}")
+            
+            if st.button("Siguiente Pregunta"):
+                tiempo_transcurrido = (datetime.now() - st.session_state['q_start_time']).total_seconds()
+                correcta = str(pregunta_actual['Respuesta_Correcta']).strip().upper()
+                area = str(pregunta_actual.get('Area_Conocimiento', 'General')).strip()
+                id_p = str(pregunta_actual.get('ID_Pregunta', 'Desconocido')).strip()
+
+                if tiempo_transcurrido > 120:
+                    st.error("⏰ ¡Tiempo agotado para esta pregunta!")
+                    st.session_state['areas_falladas'].append(area)
+                    st.session_state['preguntas_falladas'].append(id_p)
+                else:
+                    if respuesta_usuario == correcta:
+                        st.session_state['respuestas_correctas'] += 1
+                        st.session_state['areas_correctas'].append(area)
+                    else:
+                        st.session_state['areas_falladas'].append(area)
+                        st.session_state['preguntas_falladas'].append(id_p)
+                
+                # Pasar a la siguiente
+                st.session_state['q_index'] += 1
+                st.session_state['q_start_time'] = datetime.now()
+                st.rerun()
+                
+        else:
+            # --- FINALIZAR EXAMEN Y GUARDAR RESULTADOS ---
+            st.success("🎉 ¡Has completado la evaluación!")
+            calificacion_base10 = round((st.session_state['respuestas_correctas'] / total_preguntas) * 10, 1)
+            
+            area_fuerte = collections.Counter(st.session_state['areas_correctas']).most_common(1)[0][0] if st.session_state['areas_correctas'] else "N/A"
+            area_debil = collections.Counter(st.session_state['areas_falladas']).most_common(1)[0][0] if st.session_state['areas_falladas'] else "N/A"
+            preg_falladas_str = ", ".join(st.session_state['preguntas_falladas']) if st.session_state['preguntas_falladas'] else "Ninguna"
+
+            st.metric(label="Tu Calificación Final", value=f"{calificacion_base10} / 10")
+            
+            # Guardar en BD
+            cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Fecha"]
+            try:
+                df_resultados = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0)
+                df_resultados = preparar_df(df_resultados, cols_res)
+            except:
+                df_resultados = pd.DataFrame(columns=cols_res)
+
+            nuevo_id_res = int(df_resultados['ID_Resultado'].max() + 1) if not df_resultados.empty and 'ID_Resultado' in df_resultados.columns else 1
+            
+            nuevo_res = pd.DataFrame([{
+                "ID_Resultado": nuevo_id_res,
+                "Usuario": st.session_state['usuario'],
+                "Examen": st.session_state['examen_actual'],
+                "Calificacion": calificacion_base10,
+                "Area_Mas_Debil": area_debil,
+                "Area_Mas_Fuerte": area_fuerte,
+                "Preguntas_Falladas": preg_falladas_str,
+                "Fecha": str(hoy)
+            }])
+            
+            conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
+            
+            if st.button("Volver al Inicio"):
+                st.session_state['exam_in_progress'] = False
+                st.rerun()
+
+    st.stop() # Evita que los distribuidores vean el resto del CRM
+
+
+# ==========================================
+# MENÚ PRINCIPAL LATERAL (STAFF CRM)
+# ==========================================
 MENU_DASH = "📊 Dashboard General"
 MENU_SERV = "🔧 Servicio Técnico"
 MENU_MKT = "📈 Marketing"
 MENU_EVE = "📅 Calendario de Eventos"
 MENU_INV = "📦 Inventario de Refacciones"
 MENU_DEMO = "💻 Equipos Demo"
+MENU_CAPA = "🎓 Capacitación (Admin)"
 MENU_USR = "⚙️ Panel de Usuarios"
 
-# ==========================================
-# MENÚ PRINCIPAL LATERAL
-# ==========================================
 st.sidebar.markdown(f"👤 **Usuario:** {st.session_state['usuario']}")
 st.sidebar.markdown(f"🛡️ **Rol:** {st.session_state['rol']}")
 if st.sidebar.button("Cerrar Sesión"):
-    st.session_state['logeado'] = False
+    st.session_state['logeado_staff'] = False
     st.rerun()
 
 st.sidebar.markdown("---")
 opciones_menu = [MENU_DASH, MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO]
 
 if st.session_state['rol'] == 'Admin':
+    opciones_menu.append(MENU_CAPA)
     opciones_menu.append(MENU_USR)
 
 division = st.sidebar.radio("Selecciona la División:", opciones_menu)
 st.title("Panel de Control Sincronizado")
 
-# VARIABLE GLOBAL DE FECHA
-hoy = date.today()
 
 # ==========================================
 # DIVISIÓN: DASHBOARD GENERAL (FASE A)
@@ -210,22 +405,15 @@ if division == MENU_DASH:
     with col_titulo:
         st.header("Resumen Operativo en Tiempo Real")
     
-    # 1. Filtros de Tiempo
     filtro_tiempo = st.radio("⏳ Analizar resultados por:", ["Todo el histórico", "Este Año", "Este Mes", "Hoy (Día)"], horizontal=True)
     st.markdown("---")
 
-    # 2. Leer Bases de Datos
-    try:
-        df_serv_dash = conn_servicio.read(ttl=0).dropna(how='all')
-    except:
-        df_serv_dash = pd.DataFrame()
+    try: df_serv_dash = conn_servicio.read(ttl=0).dropna(how='all')
+    except: df_serv_dash = pd.DataFrame()
         
-    try:
-        df_mkt_dash = conn_marketing.read(ttl=0).dropna(how='all')
-    except:
-        df_mkt_dash = pd.DataFrame()
+    try: df_mkt_dash = conn_marketing.read(ttl=0).dropna(how='all')
+    except: df_mkt_dash = pd.DataFrame()
 
-    # 3. Formatear y Filtrar Fechas
     if not df_serv_dash.empty and 'Fecha de reporte' in df_serv_dash.columns:
         df_serv_dash['Fecha_dt'] = pd.to_datetime(df_serv_dash['Fecha de reporte'], errors='coerce')
     else:
@@ -236,7 +424,6 @@ if division == MENU_DASH:
     else:
         df_mkt_dash['Fecha_dt'] = pd.NaT
 
-    # Aplicar Filtro seleccionado
     if filtro_tiempo == "Este Año":
         df_serv_dash = df_serv_dash[df_serv_dash['Fecha_dt'].dt.year == hoy.year]
         df_mkt_dash = df_mkt_dash[df_mkt_dash['Fecha_dt'].dt.year == hoy.year]
@@ -247,7 +434,6 @@ if division == MENU_DASH:
         df_serv_dash = df_serv_dash[df_serv_dash['Fecha_dt'].dt.date == hoy]
         df_mkt_dash = df_mkt_dash[df_mkt_dash['Fecha_dt'].dt.date == hoy]
 
-    # 4. Calcular KPIs Filtrados
     casos_activos = 0
     casos_pendientes = 0
     equipos_prestados = 0
@@ -259,17 +445,14 @@ if division == MENU_DASH:
     if not df_mkt_dash.empty and 'Estado' in df_mkt_dash.columns:
         equipos_prestados = len(df_mkt_dash[df_mkt_dash['Estado'] == 'Activo'])
 
-    # Mostrar Tarjetas (Metrics)
     col1, col2, col3 = st.columns(3)
     col1.metric(label="🔧 Casos de Servicio (Activos)", value=casos_activos)
     col2.metric(label="📦 Equipos a Préstamo (Marketing)", value=equipos_prestados)
     col3.metric(label="⏳ Casos en Espera (Pendientes)", value=casos_pendientes)
     
-    # 5. Botón de Exportación EXCLUSIVO PARA ADMIN
     with col_boton:
-        st.write("") # Espacio para alinear
+        st.write("") 
         if st.session_state['rol'] == 'Admin':
-            # Preparamos el resumen para descargar
             resumen_dict = {
                 "Métrica": ["Casos de Servicio Activos", "Equipos a Préstamo", "Casos Pendientes"],
                 "Total": [casos_activos, equipos_prestados, casos_pendientes],
@@ -290,7 +473,6 @@ if division == MENU_DASH:
 
     st.markdown("---")
     
-    # 6. Fila de Gráficos
     col_chart1, col_chart2 = st.columns(2)
     
     with col_chart1:
@@ -759,7 +941,6 @@ elif division == MENU_INV:
     st.header("📦 Control de Inventario de Refacciones")
     tab_nuevas, tab_danadas = st.tabs(["✨ Piezas Nuevas", "🛠️ Piezas Dañadas"])
     
-    # --- PIEZAS NUEVAS ---
     with tab_nuevas:
         cols_nuevas = ["ID", "Box #", "PN", "Description", "SN", "Receive", "Status", "From", "Current Location", "Remarks", "Creado por"]
         try:
@@ -850,7 +1031,6 @@ elif division == MENU_INV:
         else:
             st.info("No hay piezas nuevas registradas.")
 
-    # --- PIEZAS DAÑADAS ---
     with tab_danadas:
         cols_danadas = ["ID", "PN", "Description", "SN", "Origin Unit", "Origin Unit SN", "Status", "Customer", "Distributor", "Tracking Number", "Creado por"]
         try:
@@ -944,7 +1124,7 @@ elif division == MENU_INV:
             st.info("No hay piezas dadas de baja registradas.")
 
 # ==========================================
-# DIVISIÓN: EQUIPOS DEMO (NUEVA SECCIÓN DINÁMICA)
+# DIVISIÓN: EQUIPOS DEMO
 # ==========================================
 elif division == MENU_DEMO:
     st.header("💻 Inventario de Equipos Demo (Oficina)")
@@ -958,7 +1138,6 @@ elif division == MENU_DEMO:
     except:
         df_demo = pd.DataFrame(columns=cols_demo)
 
-    # 1. OBTENER SERIES BAJO PRÉSTAMO ACTIVO EN MARKETING EN TIEMPO REAL
     series_prestadas = []
     try:
         df_mkt_actual = conn_marketing.read(ttl=0)
@@ -967,7 +1146,6 @@ elif division == MENU_DEMO:
     except:
         pass
 
-    # 2. FILTRAR EL INVENTARIO DINÁMICAMENTE
     if not df_demo.empty:
         df_demo['Serie_Aux'] = df_demo['Serial Number'].apply(limpiar_serie)
         df_demo_disponibles = df_demo[~df_demo['Serie_Aux'].isin(series_prestadas)].drop(columns=['Serie_Aux'])
@@ -977,7 +1155,6 @@ elif division == MENU_DEMO:
         df_demo_disponibles = pd.DataFrame(columns=cols_demo)
         df_demo_prestados = pd.DataFrame(columns=cols_demo)
 
-    # 3. VISTAS DEL INVENTARIO
     st.subheader("✅ Equipos Disponibles en la Oficina")
     if not df_demo_disponibles.empty:
         st.dataframe(df_demo_disponibles, use_container_width=True, hide_index=True)
@@ -989,7 +1166,6 @@ elif division == MENU_DEMO:
             st.warning("Estos equipos no aparecen arriba porque actualmente están asignados a un KOL en Marketing.")
             st.dataframe(df_demo_prestados, use_container_width=True, hide_index=True)
 
-    # 4. OPERACIONES DEL CATÁLOGO
     if st.session_state['rol'] != 'Solo Lectura':
         st.write("---")
         st.write("### ⚙️ Administración de Catálogo de Equipos Demo")
@@ -999,7 +1175,6 @@ elif division == MENU_DEMO:
             with st.form("form_alta_demo", clear_on_submit=True):
                 d_modelo = st.text_input("Model (Ej. Phased Array Probe S1-5P)")
                 d_serie = st.text_input("Serial Number")
-                
                 d_ded_sel = st.selectbox("Dedicated Unit", LISTA_EQUIPOS, key="ded_ins_d")
                 d_ded_otro = st.text_input("Especifica Dedicated Unit (Si elegiste 'Otro / Particular')", key="ded_ins_o_d")
                 
@@ -1031,7 +1206,6 @@ elif division == MENU_DEMO:
                         
                         ded_act = str(df_demo.at[idx_demo, 'Dedicated Unit']).strip()
                         idx_ded = LISTA_EQUIPOS.index(ded_act) if ded_act in LISTA_EQUIPOS else LISTA_EQUIPOS.index("Otro / Particular")
-                        
                         e_ded_sel = st.selectbox("Dedicated Unit", LISTA_EQUIPOS, index=idx_ded)
                         e_ded_otro = st.text_input("Especifica (Si elegiste Otro)", value=ded_act if ded_act not in LISTA_EQUIPOS else "")
                         
@@ -1042,12 +1216,7 @@ elif division == MENU_DEMO:
                         if save_btn:
                             ded_f_ed = e_ded_otro.strip() if e_ded_sel == "Otro / Particular" and e_ded_otro.strip() != "" else e_ded_sel
                             cambios = []
-                            campos_ver = [
-                                ('Model', str(e_mod_d).strip()), 
-                                ('Serial Number', str(e_ser_d).strip()), 
-                                ('Dedicated Unit', ded_f_ed)
-                            ]
-                            
+                            campos_ver = [('Model', str(e_mod_d).strip()), ('Serial Number', str(e_ser_d).strip()), ('Dedicated Unit', ded_f_ed)]
                             for col, nvo_val in campos_ver:
                                 ant_val = str(df_demo.at[idx_demo, col])
                                 if ant_val != str(nvo_val):
@@ -1069,16 +1238,111 @@ elif division == MENU_DEMO:
             else:
                 st.info("No hay equipos registrados en la base de datos.")
 
+
 # ==========================================
-# DIVISIÓN: PANEL DE USUARIOS (SOLO ADMIN)
+# DIVISIÓN: CAPACITACIÓN ADMIN (NUEVA FASE LMS)
+# ==========================================
+elif division == MENU_CAPA:
+    st.header("🎓 Administración de Capacitación (LMS)")
+    
+    tab_usrs, tab_res = st.tabs(["👥 Usuarios de Distribuidores", "📈 Resultados y Análisis"])
+    
+    with tab_usrs:
+        st.subheader("Contraseñas y Accesos")
+        try:
+            df_usr_ex = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0).dropna(how='all')
+            if not df_usr_ex.empty:
+                st.dataframe(df_usr_ex, use_container_width=True, hide_index=True)
+            else:
+                st.info("Aún no hay distribuidores registrados.")
+        except:
+            st.info("La pestaña 'Usuarios_Examenes' aún no existe en Google Sheets.")
+            
+    with tab_res:
+        st.subheader("Desempeño Global")
+        try:
+            df_res_ex = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0).dropna(how='all')
+            if not df_res_ex.empty:
+                st.dataframe(df_res_ex, use_container_width=True, hide_index=True)
+                
+                # Análisis Automático
+                st.markdown("### 🔍 Análisis Automático")
+                col_a1, col_a2 = st.columns(2)
+                
+                with col_a1:
+                    area_debil_comun = df_res_ex['Area_Mas_Debil'].mode()[0] if not df_res_ex['Area_Mas_Debil'].empty else "N/A"
+                    st.metric("Área General Más Reprobada", str(area_debil_comun))
+                    
+                with col_a2:
+                    # Encontrar ID más fallado procesando la columna Preguntas_Falladas
+                    todas_las_fallas = df_res_ex['Preguntas_Falladas'].dropna().astype(str).tolist()
+                    lista_ids = []
+                    for f in todas_las_fallas:
+                        if f != "Ninguna":
+                            lista_ids.extend([x.strip() for x in f.split(",")])
+                    pregunta_peor = collections.Counter(lista_ids).most_common(1)[0][0] if lista_ids else "Ninguna"
+                    st.metric("ID Pregunta Más Fallada", str(pregunta_peor))
+                    
+                # GENERACIÓN DE REPORTE PDF (Si FPDF está instalado)
+                st.markdown("---")
+                if HAS_FPDF:
+                    distribuidor_selec = st.selectbox("Generar Reporte PDF para el Distribuidor:", df_usr_ex['Distribuidor'].unique() if not df_usr_ex.empty else ["N/A"])
+                    if st.button("📄 Descargar PDF de Desempeño"):
+                        if distribuidor_selec != "N/A":
+                            # Lógica del PDF
+                            pdf = FPDF()
+                            pdf.add_page()
+                            pdf.set_font("Arial", 'B', 16)
+                            pdf.cell(200, 10, txt="Reporte de Capacitacion de Distribuidores", ln=True, align='C')
+                            
+                            pdf.set_font("Arial", '', 12)
+                            pdf.ln(10)
+                            pdf.cell(200, 10, txt=f"Empresa/Distribuidor: {distribuidor_selec}", ln=True)
+                            pdf.cell(200, 10, txt=f"Fecha de Reporte: {hoy}", ln=True)
+                            pdf.ln(10)
+                            
+                            pdf.set_font("Arial", 'B', 12)
+                            pdf.cell(200, 10, txt="Resultados de Evaluaciones:", ln=True)
+                            
+                            pdf.set_font("Arial", '', 10)
+                            # Buscar usuarios que pertenecen a ese distribuidor
+                            usuarios_dist = df_usr_ex[df_usr_ex['Distribuidor'] == distribuidor_selec]['Usuario'].tolist()
+                            resultados_filtro = df_res_ex[df_res_ex['Usuario'].isin(usuarios_dist)]
+                            
+                            if not resultados_filtro.empty:
+                                for _, row in resultados_filtro.iterrows():
+                                    texto = f"-> {row['Usuario']} | Examen: {row['Examen']} | Calif: {row['Calificacion']}/10 | Falla en: {row['Area_Mas_Debil']}"
+                                    pdf.cell(200, 8, txt=texto, ln=True)
+                            else:
+                                pdf.cell(200, 8, txt="No hay exámenes registrados para este distribuidor.", ln=True)
+                                
+                            pdf_output = pdf.output(dest="S").encode("latin-1")
+                            
+                            st.download_button(
+                                label="📥 Clic para Guardar PDF",
+                                data=pdf_output,
+                                file_name=f"Reporte_{distribuidor_selec}.pdf",
+                                mime="application/pdf",
+                                type="primary"
+                            )
+                else:
+                    st.warning("⚠️ **Librería FPDF no detectada.** Para habilitar los reportes PDF en el sistema, dile a tu programador que ejecute `pip install fpdf` en el entorno o lo agregue al archivo `requirements.txt`.")
+            else:
+                st.info("Aún no hay resultados de exámenes registrados.")
+        except:
+            st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
+
+
+# ==========================================
+# DIVISIÓN: PANEL DE USUARIOS (STAFF)
 # ==========================================
 elif division == MENU_USR:
-    st.header("Gestión de Usuarios")
+    st.header("Gestión de Usuarios del CRM (Staff)")
     
     df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
     st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
     
-    with st.expander("➕ Crear Nuevo Usuario", expanded=False):
+    with st.expander("➕ Crear Nuevo Usuario de Staff", expanded=False):
         with st.form("nuevo_usuario", clear_on_submit=True):
             nuevo_user = st.text_input("Nombre de Usuario")
             nuevo_pass = st.text_input("Contraseña")
