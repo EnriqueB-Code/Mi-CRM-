@@ -75,6 +75,12 @@ def limpiar_serie(valor):
     val_str = str(valor).strip()
     return val_str[:-2] if val_str.endswith('.0') else val_str
 
+def limpiar_decimales(valor):
+    try:
+        return str(int(float(valor)))
+    except (ValueError, TypeError):
+        return str(valor).strip()
+
 def eliminar_registro_gsheets(conexion, df_original, id_a_borrar, nombre_pestana=None):
     df_nuevo = df_original[df_original['ID'] != id_a_borrar].copy()
     df_nuevo['ID'] = range(1, len(df_nuevo) + 1)
@@ -124,19 +130,31 @@ def registrar_auditoria(cambios):
 # ==========================================
 if 'logeado_staff' not in st.session_state:
     st.session_state['logeado_staff'] = False
+if 'logeado_dist' not in st.session_state:
     st.session_state['logeado_dist'] = False
+if 'usuario' not in st.session_state:
     st.session_state['usuario'] = ""
+if 'rol' not in st.session_state:
     st.session_state['rol'] = ""
+if 'serie_key' not in st.session_state:
     st.session_state['serie_key'] = 0
 
-# Variables Estado Exámenes
+# Variables Estado Exámenes (Corrección del KeyError)
 if 'exam_in_progress' not in st.session_state:
     st.session_state['exam_in_progress'] = False
+if 'examen_actual' not in st.session_state:
+    st.session_state['examen_actual'] = None
+if 'q_index' not in st.session_state:
     st.session_state['q_index'] = 0
+if 'respuestas_correctas' not in st.session_state:
     st.session_state['respuestas_correctas'] = 0
+if 'areas_correctas' not in st.session_state:
     st.session_state['areas_correctas'] = []
+if 'areas_falladas' not in st.session_state:
     st.session_state['areas_falladas'] = []
+if 'preguntas_falladas' not in st.session_state:
     st.session_state['preguntas_falladas'] = []
+if 'q_start_time' not in st.session_state:
     st.session_state['q_start_time'] = None
 
 hoy = date.today()
@@ -246,16 +264,28 @@ if st.session_state['logeado_dist']:
     if st.button("Cerrar Sesión"):
         st.session_state['logeado_dist'] = False
         st.session_state['exam_in_progress'] = False
+        st.session_state['examen_actual'] = None
         st.rerun()
     st.markdown("---")
 
-   # Leer Banco de Preguntas
+    # Leer Banco de Preguntas con caché para evitar bloqueos
     try:
-        # Cambiamos ttl=0 por ttl=600 (10 minutos de caché) para no saturar la API de Google
         df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=600).dropna(how='all')
     except Exception as e:
-        st.error(f"No se pudo cargar el examen. Detalle técnico para el administrador: {e}")
+        st.error(f"No se pudo cargar el examen. Contacta al administrador. (Detalle: {e})")
         st.stop()
+
+    if df_banco.empty:
+        st.info("No hay exámenes disponibles en este momento.")
+        st.stop()
+
+    examenes_disponibles = df_banco['Examen'].dropna().unique().tolist()
+
+    if not st.session_state['exam_in_progress']:
+        st.subheader("Tus Evaluaciones Disponibles")
+        examen_sel = st.selectbox("Selecciona el examen a realizar:", examenes_disponibles)
+        
+        st.warning("⏱️ **ATENCIÓN:** Tienes **2 minutos máximo** por pregunta. El mínimo aprobatorio es de **7.0**. Si repruebas, deberás esperar 24 horas para un nuevo intento.")
         
         # --- LÓGICA DE BLOQUEO POR 24 HORAS ---
         bloqueado = False
@@ -267,7 +297,6 @@ if st.session_state['logeado_dist']:
                     historial = df_res_val[(df_res_val['Usuario'] == st.session_state['usuario']) & (df_res_val['Examen'] == examen_sel)].copy()
 
                     if not historial.empty:
-                        # Función para convertir la fecha guardada en formato DateTime
                         def parse_date(d):
                             d_str = str(d).strip()
                             try: return datetime.strptime(d_str, "%Y-%m-%d %H:%M:%S")
@@ -278,7 +307,6 @@ if st.session_state['logeado_dist']:
                         historial['Fecha_Parsed'] = historial['Fecha'].apply(parse_date)
                         ultimo = historial.sort_values(by='Fecha_Parsed', ascending=False).iloc[0]
 
-                        # Si la calificación fue menor a 7, comprobamos el tiempo
                         if float(ultimo['Calificacion']) < 7.0:
                             ahora = datetime.now()
                             diff = ahora - ultimo['Fecha_Parsed']
@@ -290,7 +318,7 @@ if st.session_state['logeado_dist']:
                                 minutos = int((segs_restantes % 3600) // 60)
                                 st.error(f"⏳ **Bloqueo de seguridad:** Obtuviste **{ultimo['Calificacion']}/10** en tu último intento. Podrás volver a presentar este examen en **{horas} horas y {minutos} minutos**.")
             except Exception as e:
-                pass # Si la hoja no existe o falla la lectura, permitimos el acceso por precaución.
+                pass 
 
         if not bloqueado:
             if st.button("🚀 Comenzar Examen", type="primary"):
@@ -365,7 +393,6 @@ if st.session_state['logeado_dist']:
 
             st.metric(label="Tu Calificación Final", value=f"{calificacion_base10} / 10")
             
-            # Guardar en BD (Guardamos con Fecha y HORA exacta)
             cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Fecha"]
             try:
                 df_resultados = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0)
@@ -390,9 +417,10 @@ if st.session_state['logeado_dist']:
             
             if st.button("Volver al Inicio"):
                 st.session_state['exam_in_progress'] = False
+                st.session_state['examen_actual'] = None
                 st.rerun()
 
-    st.stop()
+    st.stop() # Evita que los distribuidores vean el resto del CRM
 
 
 # ==========================================
@@ -435,11 +463,15 @@ if division == MENU_DASH:
     filtro_tiempo = st.radio("⏳ Analizar resultados por:", ["Todo el histórico", "Este Año", "Este Mes", "Hoy (Día)"], horizontal=True)
     st.markdown("---")
 
-    try: df_serv_dash = conn_servicio.read(ttl=0).dropna(how='all')
-    except: df_serv_dash = pd.DataFrame()
+    try:
+        df_serv_dash = conn_servicio.read(ttl=0).dropna(how='all')
+    except:
+        df_serv_dash = pd.DataFrame()
         
-    try: df_mkt_dash = conn_marketing.read(ttl=0).dropna(how='all')
-    except: df_mkt_dash = pd.DataFrame()
+    try:
+        df_mkt_dash = conn_marketing.read(ttl=0).dropna(how='all')
+    except:
+        df_mkt_dash = pd.DataFrame()
 
     if not df_serv_dash.empty and 'Fecha de reporte' in df_serv_dash.columns:
         df_serv_dash['Fecha_dt'] = pd.to_datetime(df_serv_dash['Fecha de reporte'], errors='coerce')
@@ -1265,9 +1297,8 @@ elif division == MENU_DEMO:
             else:
                 st.info("No hay equipos registrados en la base de datos.")
 
-
 # ==========================================
-# DIVISIÓN: CAPACITACIÓN ADMIN (NUEVA FASE LMS)
+# DIVISIÓN: CAPACITACIÓN ADMIN (LMS)
 # ==========================================
 elif division == MENU_CAPA:
     st.header("🎓 Administración de Capacitación (LMS)")
@@ -1354,7 +1385,6 @@ elif division == MENU_CAPA:
                 st.info("Aún no hay resultados de exámenes registrados.")
         except:
             st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
-
 
 # ==========================================
 # DIVISIÓN: PANEL DE USUARIOS (STAFF)
