@@ -230,9 +230,9 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
         with tab_reg_dist:
             with st.form("form_reg_dist"):
                 st.info("Crea tu cuenta temporal para realizar tus evaluaciones.")
-                nvo_u_dist = st.text_input("Elige un Usuario")
+                nvo_u_dist = st.text_input("Escribe tu nombre completo")
                 nvo_p_dist = st.text_input("Elige una Contraseña")
-                empresa_dist = st.text_input("Empresa / Distribuidor al que perteneces")
+                empresa_dist = st.text_input("Empresa / Distribuidor al que perteneces en mayusculas")
                 
                 if st.form_submit_button("Registrarme"):
                     if nvo_u_dist and nvo_p_dist and empresa_dist:
