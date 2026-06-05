@@ -180,7 +180,6 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
     elif portal_seleccionado == "🎓 Portal de Distribuidores (Capacitación)":
         tab_log_dist, tab_reg_dist = st.tabs(["🔑 Iniciar Sesión", "📝 Crear Cuenta Nueva"])
         
-        # Crear estructura de Usuarios Examenes si no existe
         cols_usr_exam = ["Usuario", "Password", "Distribuidor", "Fecha_Registro"]
         try:
             df_usr_exam = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0)
@@ -267,18 +266,54 @@ if st.session_state['logeado_dist']:
         st.subheader("Tus Evaluaciones Disponibles")
         examen_sel = st.selectbox("Selecciona el examen a realizar:", examenes_disponibles)
         
-        st.warning("⏱️ **ATENCIÓN:** Una vez que inicies, tendrás **2 minutos máximo** para responder cada pregunta. Si el temporizador llega a cero, la pregunta se calificará como incorrecta automáticamente.")
+        st.warning("⏱️ **ATENCIÓN:** Tienes **2 minutos máximo** por pregunta. El mínimo aprobatorio es de **7.0**. Si repruebas, deberás esperar 24 horas para un nuevo intento.")
         
-        if st.button("🚀 Comenzar Examen", type="primary"):
-            st.session_state['exam_in_progress'] = True
-            st.session_state['examen_actual'] = examen_sel
-            st.session_state['q_index'] = 0
-            st.session_state['respuestas_correctas'] = 0
-            st.session_state['areas_correctas'] = []
-            st.session_state['areas_falladas'] = []
-            st.session_state['preguntas_falladas'] = []
-            st.session_state['q_start_time'] = datetime.now()
-            st.rerun()
+        # --- LÓGICA DE BLOQUEO POR 24 HORAS ---
+        bloqueado = False
+        if st.session_state['usuario'].lower() != "admin_pruebas":
+            try:
+                df_res_val = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0).dropna(how='all')
+                
+                if not df_res_val.empty and 'Calificacion' in df_res_val.columns and 'Fecha' in df_res_val.columns:
+                    historial = df_res_val[(df_res_val['Usuario'] == st.session_state['usuario']) & (df_res_val['Examen'] == examen_sel)].copy()
+
+                    if not historial.empty:
+                        # Función para convertir la fecha guardada en formato DateTime
+                        def parse_date(d):
+                            d_str = str(d).strip()
+                            try: return datetime.strptime(d_str, "%Y-%m-%d %H:%M:%S")
+                            except:
+                                try: return datetime.strptime(d_str, "%Y-%m-%d")
+                                except: return datetime.min
+
+                        historial['Fecha_Parsed'] = historial['Fecha'].apply(parse_date)
+                        ultimo = historial.sort_values(by='Fecha_Parsed', ascending=False).iloc[0]
+
+                        # Si la calificación fue menor a 7, comprobamos el tiempo
+                        if float(ultimo['Calificacion']) < 7.0:
+                            ahora = datetime.now()
+                            diff = ahora - ultimo['Fecha_Parsed']
+                            
+                            if diff < timedelta(hours=24):
+                                bloqueado = True
+                                segs_restantes = timedelta(hours=24).total_seconds() - diff.total_seconds()
+                                horas = int(segs_restantes // 3600)
+                                minutos = int((segs_restantes % 3600) // 60)
+                                st.error(f"⏳ **Bloqueo de seguridad:** Obtuviste **{ultimo['Calificacion']}/10** en tu último intento. Podrás volver a presentar este examen en **{horas} horas y {minutos} minutos**.")
+            except Exception as e:
+                pass # Si la hoja no existe o falla la lectura, permitimos el acceso por precaución.
+
+        if not bloqueado:
+            if st.button("🚀 Comenzar Examen", type="primary"):
+                st.session_state['exam_in_progress'] = True
+                st.session_state['examen_actual'] = examen_sel
+                st.session_state['q_index'] = 0
+                st.session_state['respuestas_correctas'] = 0
+                st.session_state['areas_correctas'] = []
+                st.session_state['areas_falladas'] = []
+                st.session_state['preguntas_falladas'] = []
+                st.session_state['q_start_time'] = datetime.now()
+                st.rerun()
 
     else:
         # Examen en curso
@@ -322,23 +357,26 @@ if st.session_state['logeado_dist']:
                         st.session_state['areas_falladas'].append(area)
                         st.session_state['preguntas_falladas'].append(id_p)
                 
-                # Pasar a la siguiente
                 st.session_state['q_index'] += 1
                 st.session_state['q_start_time'] = datetime.now()
                 st.rerun()
                 
         else:
             # --- FINALIZAR EXAMEN Y GUARDAR RESULTADOS ---
-            st.success("🎉 ¡Has completado la evaluación!")
             calificacion_base10 = round((st.session_state['respuestas_correctas'] / total_preguntas) * 10, 1)
             
+            if calificacion_base10 >= 7.0:
+                st.success("🎉 ¡Felicidades! Has completado y aprobado la evaluación.")
+            else:
+                st.error("⚠️ No has alcanzado el puntaje mínimo de 7.0. Deberás esperar 24 horas para volver a intentarlo.")
+                
             area_fuerte = collections.Counter(st.session_state['areas_correctas']).most_common(1)[0][0] if st.session_state['areas_correctas'] else "N/A"
             area_debil = collections.Counter(st.session_state['areas_falladas']).most_common(1)[0][0] if st.session_state['areas_falladas'] else "N/A"
             preg_falladas_str = ", ".join(st.session_state['preguntas_falladas']) if st.session_state['preguntas_falladas'] else "Ninguna"
 
             st.metric(label="Tu Calificación Final", value=f"{calificacion_base10} / 10")
             
-            # Guardar en BD
+            # Guardar en BD (Guardamos con Fecha y HORA exacta)
             cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Fecha"]
             try:
                 df_resultados = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0)
@@ -356,7 +394,7 @@ if st.session_state['logeado_dist']:
                 "Area_Mas_Debil": area_debil,
                 "Area_Mas_Fuerte": area_fuerte,
                 "Preguntas_Falladas": preg_falladas_str,
-                "Fecha": str(hoy)
+                "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }])
             
             conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
@@ -365,7 +403,7 @@ if st.session_state['logeado_dist']:
                 st.session_state['exam_in_progress'] = False
                 st.rerun()
 
-    st.stop() # Evita que los distribuidores vean el resto del CRM
+    st.stop()
 
 
 # ==========================================
@@ -1274,7 +1312,6 @@ elif division == MENU_CAPA:
                     st.metric("Área General Más Reprobada", str(area_debil_comun))
                     
                 with col_a2:
-                    # Encontrar ID más fallado procesando la columna Preguntas_Falladas
                     todas_las_fallas = df_res_ex['Preguntas_Falladas'].dropna().astype(str).tolist()
                     lista_ids = []
                     for f in todas_las_fallas:
@@ -1283,13 +1320,11 @@ elif division == MENU_CAPA:
                     pregunta_peor = collections.Counter(lista_ids).most_common(1)[0][0] if lista_ids else "Ninguna"
                     st.metric("ID Pregunta Más Fallada", str(pregunta_peor))
                     
-                # GENERACIÓN DE REPORTE PDF (Si FPDF está instalado)
                 st.markdown("---")
                 if HAS_FPDF:
                     distribuidor_selec = st.selectbox("Generar Reporte PDF para el Distribuidor:", df_usr_ex['Distribuidor'].unique() if not df_usr_ex.empty else ["N/A"])
                     if st.button("📄 Descargar PDF de Desempeño"):
                         if distribuidor_selec != "N/A":
-                            # Lógica del PDF
                             pdf = FPDF()
                             pdf.add_page()
                             pdf.set_font("Arial", 'B', 16)
@@ -1305,7 +1340,6 @@ elif division == MENU_CAPA:
                             pdf.cell(200, 10, txt="Resultados de Evaluaciones:", ln=True)
                             
                             pdf.set_font("Arial", '', 10)
-                            # Buscar usuarios que pertenecen a ese distribuidor
                             usuarios_dist = df_usr_ex[df_usr_ex['Distribuidor'] == distribuidor_selec]['Usuario'].tolist()
                             resultados_filtro = df_res_ex[df_res_ex['Usuario'].isin(usuarios_dist)]
                             
@@ -1314,7 +1348,7 @@ elif division == MENU_CAPA:
                                     texto = f"-> {row['Usuario']} | Examen: {row['Examen']} | Calif: {row['Calificacion']}/10 | Falla en: {row['Area_Mas_Debil']}"
                                     pdf.cell(200, 8, txt=texto, ln=True)
                             else:
-                                pdf.cell(200, 8, txt="No hay exámenes registrados para este distribuidor.", ln=True)
+                                pdf.cell(200, 8, txt="No hay examenes registrados para este distribuidor.", ln=True)
                                 
                             pdf_output = pdf.output(dest="S").encode("latin-1")
                             
