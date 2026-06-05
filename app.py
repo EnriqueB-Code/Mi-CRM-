@@ -249,24 +249,13 @@ if st.session_state['logeado_dist']:
         st.rerun()
     st.markdown("---")
 
-    # Leer Banco de Preguntas
+   # Leer Banco de Preguntas
     try:
-        df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=0).dropna(how='all')
-    except:
-        st.error("No se encontró la base de datos de 'Banco_Preguntas'. Contacta al administrador.")
+        # Cambiamos ttl=0 por ttl=600 (10 minutos de caché) para no saturar la API de Google
+        df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=600).dropna(how='all')
+    except Exception as e:
+        st.error(f"No se pudo cargar el examen. Detalle técnico para el administrador: {e}")
         st.stop()
-
-    if df_banco.empty:
-        st.info("No hay exámenes disponibles en este momento.")
-        st.stop()
-
-    examenes_disponibles = df_banco['Examen'].dropna().unique().tolist()
-
-    if not st.session_state['exam_in_progress']:
-        st.subheader("Tus Evaluaciones Disponibles")
-        examen_sel = st.selectbox("Selecciona el examen a realizar:", examenes_disponibles)
-        
-        st.warning("⏱️ **ATENCIÓN:** Tienes **2 minutos máximo** por pregunta. El mínimo aprobatorio es de **7.0**. Si repruebas, deberás esperar 24 horas para un nuevo intento.")
         
         # --- LÓGICA DE BLOQUEO POR 24 HORAS ---
         bloqueado = False
