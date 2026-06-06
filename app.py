@@ -1312,10 +1312,51 @@ elif division == MENU_CAPA:
             df_usr_ex = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0).dropna(how='all')
             if not df_usr_ex.empty:
                 st.dataframe(df_usr_ex, use_container_width=True, hide_index=True)
+                
+                # ---> AQUÍ ESTÁ LA NUEVA SECCIÓN DE EDICIÓN Y BORRADO <---
+                if st.session_state['rol'] == 'Admin':
+                    st.markdown("---")
+                    st.write("### ⚙️ Gestionar Distribuidores")
+                    
+                    usuario_a_gestionar = st.selectbox("Selecciona el Usuario a gestionar:", df_usr_ex['Usuario'].unique())
+                    
+                    if usuario_a_gestionar:
+                        idx_usr = df_usr_ex.index[df_usr_ex['Usuario'] == usuario_a_gestionar].tolist()[0]
+                        
+                        tab_editar_usr, tab_borrar_usr = st.tabs(["✏️ Editar Usuario", "🗑️ Eliminar Usuario"])
+                        
+                        with tab_editar_usr:
+                            with st.form("form_edit_distribuidor"):
+                                e_pass = st.text_input("Contraseña", value=df_usr_ex.at[idx_usr, 'Password'])
+                                e_dist = st.text_input("Distribuidor/Empresa", value=df_usr_ex.at[idx_usr, 'Distribuidor'])
+                                
+                                if st.form_submit_button("💾 Guardar Cambios"):
+                                    df_usr_ex.at[idx_usr, 'Password'] = str(e_pass).strip()
+                                    df_usr_ex.at[idx_usr, 'Distribuidor'] = str(e_dist).strip()
+                                    conn_servicio.update(worksheet="Usuarios_Examenes", data=df_usr_ex)
+                                    st.success(f"Usuario {usuario_a_gestionar} actualizado exitosamente.")
+                                    st.rerun()
+                                    
+                        with tab_borrar_usr:
+                            st.warning(f"¿Estás seguro de que deseas eliminar al usuario **{usuario_a_gestionar}**? Esta acción no se puede deshacer.")
+                            if st.button("🚨 Sí, eliminar usuario"):
+                                # Se elimina de manera limpia para no dejar filas fantasma en Sheets
+                                df_nuevo_usr = df_usr_ex.drop(idx_usr).reset_index(drop=True)
+                                diferencia = len(df_usr_ex) - len(df_nuevo_usr)
+                                
+                                if diferencia > 0:
+                                    filas_vacias = pd.DataFrame([[""] * len(df_usr_ex.columns)] * diferencia, columns=df_usr_ex.columns)
+                                    df_escritura = pd.concat([df_nuevo_usr, filas_vacias], ignore_index=True)
+                                    conn_servicio.update(worksheet="Usuarios_Examenes", data=df_escritura)
+                                else:
+                                    conn_servicio.update(worksheet="Usuarios_Examenes", data=df_nuevo_usr)
+                                    
+                                st.success("Usuario eliminado correctamente.")
+                                st.rerun()
             else:
                 st.info("Aún no hay distribuidores registrados.")
-        except:
-            st.info("La pestaña 'Usuarios_Examenes' aún no existe en Google Sheets.")
+        except Exception as e:
+            st.info(f"La pestaña 'Usuarios_Examenes' aún no existe en Google Sheets o hay un error. (Detalle: {e})")
             
     with tab_res:
         st.subheader("Desempeño Global")
