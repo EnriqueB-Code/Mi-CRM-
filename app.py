@@ -14,6 +14,31 @@ except ImportError:
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Sistema de Gestión CRM y Capacitación", layout="wide")
 
+# --- INICIALIZACIÓN DE ESTADO ---
+# Esto previene el KeyError al cargar la página por primera vez
+def inicializar_estado():
+    defaults = {
+        'logeado_staff': False,
+        'logeado_dist': False,
+        'usuario': "",
+        'rol': "",
+        'serie_key': 0,
+        'exam_in_progress': False,
+        'examen_actual': None,
+        'q_index': 0,
+        'respuestas_correctas': 0,
+        'areas_correctas': [],
+        'areas_falladas': [],
+        'preguntas_falladas': [],
+        'q_start_time': None,
+        'examen_guardado': False
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+inicializar_estado()
+
 # --- CONEXIÓN A GOOGLE SHEETS ---
 try:
     conn_servicio = st.connection("gsheets_servicio", type=GSheetsConnection)
@@ -125,38 +150,6 @@ def registrar_auditoria(cambios):
     df_final = pd.concat([df_aud, pd.DataFrame(logs)], ignore_index=True)
     conn_servicio.update(worksheet="Auditoria", data=df_final)
 
-# ==========================================
-# VARIABLES DE ESTADO Y LOGIN DUAL
-# ==========================================
-if 'logeado_staff' not in st.session_state:
-    st.session_state['logeado_staff'] = False
-if 'logeado_dist' not in st.session_state:
-    st.session_state['logeado_dist'] = False
-if 'usuario' not in st.session_state:
-    st.session_state['usuario'] = ""
-if 'rol' not in st.session_state:
-    st.session_state['rol'] = ""
-if 'serie_key' not in st.session_state:
-    st.session_state['serie_key'] = 0
-
-# Variables Estado Exámenes (Corrección del KeyError)
-if 'exam_in_progress' not in st.session_state:
-    st.session_state['exam_in_progress'] = False
-if 'examen_actual' not in st.session_state:
-    st.session_state['examen_actual'] = None
-if 'q_index' not in st.session_state:
-    st.session_state['q_index'] = 0
-if 'respuestas_correctas' not in st.session_state:
-    st.session_state['respuestas_correctas'] = 0
-if 'areas_correctas' not in st.session_state:
-    st.session_state['areas_correctas'] = []
-if 'areas_falladas' not in st.session_state:
-    st.session_state['areas_falladas'] = []
-if 'preguntas_falladas' not in st.session_state:
-    st.session_state['preguntas_falladas'] = []
-if 'q_start_time' not in st.session_state:
-    st.session_state['q_start_time'] = None
-
 hoy = date.today()
 
 # --- PANTALLA DE ACCESO DUAL ---
@@ -230,9 +223,9 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
         with tab_reg_dist:
             with st.form("form_reg_dist"):
                 st.info("Crea tu cuenta temporal para realizar tus evaluaciones.")
-                nvo_u_dist = st.text_input("Escribe tu nombre completo")
+                nvo_u_dist = st.text_input("Elige un Usuario")
                 nvo_p_dist = st.text_input("Elige una Contraseña")
-                empresa_dist = st.text_input("Empresa / Distribuidor al que perteneces en mayusculas")
+                empresa_dist = st.text_input("Empresa / Distribuidor al que perteneces")
                 
                 if st.form_submit_button("Registrarme"):
                     if nvo_u_dist and nvo_p_dist and empresa_dist:
@@ -330,6 +323,7 @@ if st.session_state['logeado_dist']:
                 st.session_state['areas_falladas'] = []
                 st.session_state['preguntas_falladas'] = []
                 st.session_state['q_start_time'] = datetime.now()
+                st.session_state['examen_guardado'] = False # Inicializa el candado abierto
                 st.rerun()
 
     else:
@@ -393,31 +387,37 @@ if st.session_state['logeado_dist']:
 
             st.metric(label="Tu Calificación Final", value=f"{calificacion_base10} / 10")
             
-            cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Fecha"]
-            try:
-                df_resultados = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0)
-                df_resultados = preparar_df(df_resultados, cols_res)
-            except:
-                df_resultados = pd.DataFrame(columns=cols_res)
+            # ---> AQUÍ ESTÁ LA SOLUCIÓN DEL CANDADO <---
+            if not st.session_state.get('examen_guardado', False):
+                cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Fecha"]
+                try:
+                    df_resultados = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0)
+                    df_resultados = preparar_df(df_resultados, cols_res)
+                except:
+                    df_resultados = pd.DataFrame(columns=cols_res)
 
-            nuevo_id_res = int(df_resultados['ID_Resultado'].max() + 1) if not df_resultados.empty and 'ID_Resultado' in df_resultados.columns else 1
-            
-            nuevo_res = pd.DataFrame([{
-                "ID_Resultado": nuevo_id_res,
-                "Usuario": st.session_state['usuario'],
-                "Examen": st.session_state['examen_actual'],
-                "Calificacion": calificacion_base10,
-                "Area_Mas_Debil": area_debil,
-                "Area_Mas_Fuerte": area_fuerte,
-                "Preguntas_Falladas": preg_falladas_str,
-                "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }])
-            
-            conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
+                nuevo_id_res = int(df_resultados['ID_Resultado'].max() + 1) if not df_resultados.empty and 'ID_Resultado' in df_resultados.columns else 1
+                
+                nuevo_res = pd.DataFrame([{
+                    "ID_Resultado": nuevo_id_res,
+                    "Usuario": st.session_state['usuario'],
+                    "Examen": st.session_state['examen_actual'],
+                    "Calificacion": calificacion_base10,
+                    "Area_Mas_Debil": area_debil,
+                    "Area_Mas_Fuerte": area_fuerte,
+                    "Preguntas_Falladas": preg_falladas_str,
+                    "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }])
+                
+                conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
+                
+                # Cerramos el candado para que no se duplique
+                st.session_state['examen_guardado'] = True
             
             if st.button("Volver al Inicio"):
                 st.session_state['exam_in_progress'] = False
                 st.session_state['examen_actual'] = None
+                st.session_state['examen_guardado'] = False # Reiniciamos el candado
                 st.rerun()
 
     st.stop() # Evita que los distribuidores vean el resto del CRM
@@ -1297,6 +1297,7 @@ elif division == MENU_DEMO:
             else:
                 st.info("No hay equipos registrados en la base de datos.")
 
+
 # ==========================================
 # DIVISIÓN: CAPACITACIÓN ADMIN (LMS)
 # ==========================================
@@ -1385,6 +1386,7 @@ elif division == MENU_CAPA:
                 st.info("Aún no hay resultados de exámenes registrados.")
         except:
             st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
+
 
 # ==========================================
 # DIVISIÓN: PANEL DE USUARIOS (STAFF)
