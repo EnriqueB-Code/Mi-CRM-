@@ -1456,7 +1456,7 @@ elif division == MENU_CAPA:
         except:
             st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
             
-    with tab_conf:
+   with tab_conf:
         st.subheader("Parámetros Generales del Sistema")
         try:
             df_config = conn_servicio.read(worksheet="Configuracion", ttl=0)
@@ -1465,8 +1465,12 @@ elif division == MENU_CAPA:
             df_config = pd.DataFrame(columns=["Parametro", "Valor"])
 
         if not df_config.empty and "Tiempo_Pregunta_Segundos" in df_config['Parametro'].values:
-            idx_conf = df_config.index[df_config['Parametro'] == "Tiempo_Pregunta_Segundos"].tolist()[0]
-            tiempo_actual = int(df_config.at[idx_conf, 'Valor'])
+            # Buscar el valor actual de forma segura
+            try:
+                val = df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'].iloc[0]
+                tiempo_actual = int(float(val))
+            except:
+                tiempo_actual = 120 
         else:
             tiempo_actual = 120 
             
@@ -1475,17 +1479,20 @@ elif division == MENU_CAPA:
             st.caption("Ejemplo: 60 = 1 minuto | 120 = 2 minutos | 180 = 3 minutos")
             
             if st.form_submit_button("💾 Guardar Configuración"):
+                # Forzamos que la columna sea de texto para que Pandas no lance TypeError
+                if not df_config.empty and 'Valor' in df_config.columns:
+                    df_config['Valor'] = df_config['Valor'].astype(str)
+
                 if df_config.empty or "Tiempo_Pregunta_Segundos" not in df_config['Parametro'].values:
                     nvo_reg = pd.DataFrame([{"Parametro": "Tiempo_Pregunta_Segundos", "Valor": str(nvo_tiempo)}])
                     df_config = pd.concat([df_config, nvo_reg], ignore_index=True)
                 else:
-                    idx_conf = df_config.index[df_config['Parametro'] == "Tiempo_Pregunta_Segundos"].tolist()[0]
-                    df_config.at[idx_conf, 'Valor'] = str(nvo_tiempo)
+                    # Método más seguro para reemplazar el valor
+                    df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'] = str(nvo_tiempo)
                 
                 conn_servicio.update(worksheet="Configuracion", data=df_config)
                 st.success(f"Tiempo actualizado correctamente a {nvo_tiempo} segundos.")
                 st.rerun()
-
 
 # ==========================================
 # DIVISIÓN: PANEL DE USUARIOS (STAFF)
