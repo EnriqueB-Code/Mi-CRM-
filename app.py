@@ -261,19 +261,6 @@ if st.session_state['logeado_dist']:
         st.rerun()
     st.markdown("---")
 
-    # --- LEER CONFIGURACIÓN DE TIEMPO DEL EXAMEN ---
-    try:
-        df_config_ex = conn_servicio.read(worksheet="Configuracion", ttl=60).dropna(how='all')
-        if not df_config_ex.empty and "Tiempo_Pregunta_Segundos" in df_config_ex['Parametro'].values:
-            idx_c = df_config_ex.index[df_config_ex['Parametro'] == "Tiempo_Pregunta_Segundos"].tolist()[0]
-            TIEMPO_LIMITE = int(df_config_ex.at[idx_c, 'Valor'])
-        else:
-            TIEMPO_LIMITE = 120 # Default si no existe
-    except:
-        TIEMPO_LIMITE = 120
-        
-    tiempo_texto = f"{TIEMPO_LIMITE // 60} minutos" if TIEMPO_LIMITE % 60 == 0 else f"{TIEMPO_LIMITE} segundos"
-
     # Leer Banco de Preguntas con caché para evitar bloqueos
     try:
         df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=600).dropna(how='all')
@@ -291,7 +278,7 @@ if st.session_state['logeado_dist']:
         st.subheader("Tus Evaluaciones Disponibles")
         examen_sel = st.selectbox("Selecciona el examen a realizar:", examenes_disponibles)
         
-        st.warning(f"⏱️ **ATENCIÓN:** Tienes **{tiempo_texto} máximo** por pregunta. El mínimo aprobatorio es de **7.0**. Si repruebas, deberás esperar 24 horas para un nuevo intento.")
+        st.warning("⏱️ **ATENCIÓN:** Tienes **2 minutos máximo** por pregunta. El mínimo aprobatorio es de **7.0**. Si repruebas, deberás esperar 24 horas para un nuevo intento.")
         
         # --- LÓGICA DE BLOQUEO POR 24 HORAS ---
         bloqueado = False
@@ -336,7 +323,7 @@ if st.session_state['logeado_dist']:
                 st.session_state['areas_falladas'] = []
                 st.session_state['preguntas_falladas'] = []
                 st.session_state['q_start_time'] = datetime.now()
-                st.session_state['examen_guardado'] = False 
+                st.session_state['examen_guardado'] = False # Inicializa el candado abierto
                 st.rerun()
 
     else:
@@ -350,7 +337,7 @@ if st.session_state['logeado_dist']:
             
             st.progress((q_idx) / total_preguntas)
             st.write(f"**Pregunta {q_idx + 1} de {total_preguntas}** (Área: {pregunta_actual.get('Area_Conocimiento', 'General')})")
-            st.info(f"⏱️ *El temporizador interno de {TIEMPO_LIMITE} segundos está corriendo...*")
+            st.info("⏱️ *El temporizador interno de 120 segundos está corriendo...*")
             
             st.markdown(f"### {pregunta_actual['Pregunta']}")
             
@@ -370,8 +357,8 @@ if st.session_state['logeado_dist']:
                 id_p = str(pregunta_actual.get('ID_Pregunta', 'Desconocido')).strip()
                 texto_pregunta = str(pregunta_actual['Pregunta']).strip()
 
-                # Validación de tiempo dinámico
-                if tiempo_transcurrido > TIEMPO_LIMITE:
+                # --- NUEVA LÓGICA DE REGISTRO DE FALLAS DETALLADAS ---
+                if tiempo_transcurrido > 120:
                     st.error("⏰ ¡Tiempo agotado para esta pregunta!")
                     st.session_state['areas_falladas'].append(area)
                     falla_detalle = f"{id_p}: {texto_pregunta} (Eligió: Tiempo Agotado)"
@@ -401,6 +388,7 @@ if st.session_state['logeado_dist']:
             area_fuerte = collections.Counter(st.session_state['areas_correctas']).most_common(1)[0][0] if st.session_state['areas_correctas'] else "N/A"
             area_debil = collections.Counter(st.session_state['areas_falladas']).most_common(1)[0][0] if st.session_state['areas_falladas'] else "N/A"
             
+            # Se guardan las fallas separadas por " | " para que sea más legible en Google Sheets
             preg_falladas_str = " | ".join(st.session_state['preguntas_falladas']) if st.session_state['preguntas_falladas'] else "Ninguna"
 
             st.metric(label="Tu Calificación Final", value=f"{calificacion_base10} / 10")
@@ -428,12 +416,14 @@ if st.session_state['logeado_dist']:
                 }])
                 
                 conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
+                
+                # Cerramos el candado para que no se duplique
                 st.session_state['examen_guardado'] = True
             
             if st.button("Volver al Inicio"):
                 st.session_state['exam_in_progress'] = False
                 st.session_state['examen_actual'] = None
-                st.session_state['examen_guardado'] = False 
+                st.session_state['examen_guardado'] = False # Reiniciamos el candado
                 st.rerun()
 
     st.stop() # Evita que los distribuidores vean el resto del CRM
@@ -1320,8 +1310,7 @@ elif division == MENU_DEMO:
 elif division == MENU_CAPA:
     st.header("🎓 Administración de Capacitación (LMS)")
     
-    # ---> AÑADIDA LA TERCERA PESTAÑA DE CONFIGURACIÓN <---
-    tab_usrs, tab_res, tab_conf = st.tabs(["👥 Usuarios de Distribuidores", "📈 Resultados y Análisis", "⚙️ Configuración"])
+    tab_usrs, tab_res = st.tabs(["👥 Usuarios de Distribuidores", "📈 Resultados y Análisis"])
     
     with tab_usrs:
         st.subheader("Contraseñas y Accesos")
@@ -1330,6 +1319,7 @@ elif division == MENU_CAPA:
             if not df_usr_ex.empty:
                 st.dataframe(df_usr_ex, use_container_width=True, hide_index=True)
                 
+                # ---> SECCIÓN DE EDICIÓN Y BORRADO DE DISTRIBUIDORES <---
                 if st.session_state['rol'] == 'Admin':
                     st.markdown("---")
                     st.write("### ⚙️ Gestionar Distribuidores")
@@ -1380,6 +1370,7 @@ elif division == MENU_CAPA:
             if not df_res_ex.empty:
                 st.dataframe(df_res_ex, use_container_width=True, hide_index=True)
                 
+                # Análisis Automático
                 st.markdown("### 🔍 Análisis Automático")
                 col_a1, col_a2 = st.columns(2)
                 
@@ -1392,6 +1383,7 @@ elif division == MENU_CAPA:
                     lista_ids = []
                     for f in todas_las_fallas:
                         if f != "Ninguna":
+                            # Motor de compatibilidad: Soporta comas (viejo) y " | " (nuevo detallado)
                             if " | " in f:
                                 items = f.split(" | ")
                             else:
@@ -1401,6 +1393,7 @@ elif division == MENU_CAPA:
                                 item = item.strip()
                                 if not item: continue
                                 
+                                # Si tiene formato detallado "ID: Texto (Eligió: X)", extraemos solo el ID para conteo
                                 if ":" in item and "(Eligió:" in item:
                                     q_id = item.split(":")[0].strip()
                                     lista_ids.append(q_id)
@@ -1455,44 +1448,7 @@ elif division == MENU_CAPA:
                 st.info("Aún no hay resultados de exámenes registrados.")
         except:
             st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
-            
-   with tab_conf:
-        st.subheader("Parámetros Generales del Sistema")
-        try:
-            df_config = conn_servicio.read(worksheet="Configuracion", ttl=0)
-            df_config = preparar_df(df_config, ["Parametro", "Valor"]).fillna("")
-        except:
-            df_config = pd.DataFrame(columns=["Parametro", "Valor"])
 
-        if not df_config.empty and "Tiempo_Pregunta_Segundos" in df_config['Parametro'].values:
-            # Buscar el valor actual de forma segura
-            try:
-                val = df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'].iloc[0]
-                tiempo_actual = int(float(val))
-            except:
-                tiempo_actual = 120 
-        else:
-            tiempo_actual = 120 
-            
-        with st.form("form_config_exam"):
-            nvo_tiempo = st.number_input("⏱️ Tiempo máximo por pregunta (en segundos):", min_value=10, max_value=600, value=tiempo_actual, step=10)
-            st.caption("Ejemplo: 60 = 1 minuto | 120 = 2 minutos | 180 = 3 minutos")
-            
-            if st.form_submit_button("💾 Guardar Configuración"):
-                # Forzamos que la columna sea de texto para que Pandas no lance TypeError
-                if not df_config.empty and 'Valor' in df_config.columns:
-                    df_config['Valor'] = df_config['Valor'].astype(str)
-
-                if df_config.empty or "Tiempo_Pregunta_Segundos" not in df_config['Parametro'].values:
-                    nvo_reg = pd.DataFrame([{"Parametro": "Tiempo_Pregunta_Segundos", "Valor": str(nvo_tiempo)}])
-                    df_config = pd.concat([df_config, nvo_reg], ignore_index=True)
-                else:
-                    # Método más seguro para reemplazar el valor
-                    df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'] = str(nvo_tiempo)
-                
-                conn_servicio.update(worksheet="Configuracion", data=df_config)
-                st.success(f"Tiempo actualizado correctamente a {nvo_tiempo} segundos.")
-                st.rerun()
 
 # ==========================================
 # DIVISIÓN: PANEL DE USUARIOS (STAFF)
