@@ -15,13 +15,13 @@ except ImportError:
 st.set_page_config(page_title="Sistema de Gestión CRM y Capacitación", layout="wide")
 
 # --- INICIALIZACIÓN DE ESTADO ---
-# Esto previene el KeyError al cargar la página por primera vez
 def inicializar_estado():
     defaults = {
         'logeado_staff': False,
         'logeado_dist': False,
         'usuario': "",
         'rol': "",
+        'area': "", # NUEVA VARIABLE MAESTRA DE PERMISOS
         'serie_key': 0,
         'exam_in_progress': False,
         'examen_actual': None,
@@ -176,17 +176,31 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                     if not valido.empty:
                         st.session_state['logeado_staff'] = True
                         st.session_state['usuario'] = str(user_input).strip()
-                        st.session_state['rol'] = str(valido.iloc[0]['Rol']).strip()
+                        
+                        # --- RETROCOMPATIBILIDAD Y MAPEO DE ÁREA ---
+                        area_asignada = ""
+                        if 'Area' in valido.columns and pd.notna(valido.iloc[0]['Area']) and str(valido.iloc[0]['Area']).strip() != "":
+                            area_asignada = str(valido.iloc[0]['Area']).strip()
+                        elif 'Rol' in valido.columns:
+                            rol_antiguo = str(valido.iloc[0]['Rol']).strip()
+                            if rol_antiguo == "Admin": area_asignada = "Admin"
+                            elif rol_antiguo == "Solo Lectura": area_asignada = "Invitado"
+                            else: area_asignada = "Servicio" # Default para usuarios viejos
+                        else:
+                            area_asignada = "Invitado"
+                            
+                        st.session_state['area'] = area_asignada
                         
                         idx = df_usuarios.index[df_usuarios['Usuario'] == str(user_input).strip()].tolist()[0]
                         if 'Ultimo Acceso' not in df_usuarios.columns: df_usuarios['Ultimo Acceso'] = ""
+                        if 'Area' not in df_usuarios.columns: df_usuarios['Area'] = area_asignada
                         df_usuarios.at[idx, 'Ultimo Acceso'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         conn_servicio.update(worksheet="Usuarios", data=df_usuarios)
                         st.rerun()
                     else:
                         st.error("❌ Usuario o contraseña incorrectos para Staff.")
-                except Exception:
-                    st.error("Error al leer la base de datos de Usuarios.")
+                except Exception as e:
+                    st.error(f"Error al leer la base de datos de Usuarios: {e}")
     
     elif portal_seleccionado == "🎓 Portal de Distribuidores (Capacitación)":
         tab_log_dist, tab_reg_dist = st.tabs(["🔑 Iniciar Sesión", "📝 Crear Cuenta Nueva"])
@@ -213,7 +227,7 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                         if not valido_dist.empty:
                             st.session_state['logeado_dist'] = True
                             st.session_state['usuario'] = str(u_dist).strip()
-                            st.session_state['rol'] = "Distribuidor_Examen"
+                            st.session_state['rol'] = "Distribuidor_Examen" # Se mantiene para portal examen
                             st.rerun()
                         else:
                             st.error("❌ Credenciales incorrectas. Si eres nuevo, ve a la pestaña 'Crear Cuenta'.")
@@ -261,24 +275,22 @@ if st.session_state['logeado_dist']:
         st.rerun()
     st.markdown("---")
 
-    # --- LEER CONFIGURACIÓN DE TIEMPO DEL EXAMEN ---
     try:
         df_config_ex = conn_servicio.read(worksheet="Configuracion", ttl=60).dropna(how='all')
         if not df_config_ex.empty and "Tiempo_Pregunta_Segundos" in df_config_ex['Parametro'].values:
             idx_c = df_config_ex.index[df_config_ex['Parametro'] == "Tiempo_Pregunta_Segundos"].tolist()[0]
             TIEMPO_LIMITE = int(float(df_config_ex.at[idx_c, 'Valor']))
         else:
-            TIEMPO_LIMITE = 120 # Default si no existe
+            TIEMPO_LIMITE = 120 
     except:
         TIEMPO_LIMITE = 120
         
     tiempo_texto = f"{TIEMPO_LIMITE // 60} minutos" if TIEMPO_LIMITE % 60 == 0 else f"{TIEMPO_LIMITE} segundos"
 
-    # Leer Banco de Preguntas con caché para evitar bloqueos
     try:
         df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=600).dropna(how='all')
     except Exception as e:
-        st.error(f"No se pudo cargar el examen. Contacta al administrador. (Detalle: {e})")
+        st.error(f"No se pudo cargar el examen. Contacta al administrador.")
         st.stop()
 
     if df_banco.empty:
@@ -293,7 +305,6 @@ if st.session_state['logeado_dist']:
         
         st.warning(f"⏱️ **ATENCIÓN:** Tienes **{tiempo_texto} máximo** por pregunta. El mínimo aprobatorio es de **7.0**. Si repruebas, deberás esperar 24 horas para un nuevo intento.")
         
-        # --- LÓGICA DE BLOQUEO POR 24 HORAS ---
         bloqueado = False
         if st.session_state['usuario'].lower() != "admin_pruebas":
             try:
@@ -340,7 +351,6 @@ if st.session_state['logeado_dist']:
                 st.rerun()
 
     else:
-        # Examen en curso
         df_examen_actual = df_banco[df_banco['Examen'] == st.session_state['examen_actual']].reset_index(drop=True)
         total_preguntas = len(df_examen_actual)
         q_idx = st.session_state['q_index']
@@ -370,7 +380,6 @@ if st.session_state['logeado_dist']:
                 id_p = str(pregunta_actual.get('ID_Pregunta', 'Desconocido')).strip()
                 texto_pregunta = str(pregunta_actual['Pregunta']).strip()
 
-                # Validación de tiempo dinámico y registro detallado
                 if tiempo_transcurrido > TIEMPO_LIMITE:
                     st.error("⏰ ¡Tiempo agotado para esta pregunta!")
                     st.session_state['areas_falladas'].append(area)
@@ -390,7 +399,6 @@ if st.session_state['logeado_dist']:
                 st.rerun()
                 
         else:
-            # --- FINALIZAR EXAMEN Y GUARDAR RESULTADOS ---
             calificacion_base10 = round((st.session_state['respuestas_correctas'] / total_preguntas) * 10, 1)
             
             if calificacion_base10 >= 7.0:
@@ -400,12 +408,10 @@ if st.session_state['logeado_dist']:
                 
             area_fuerte = collections.Counter(st.session_state['areas_correctas']).most_common(1)[0][0] if st.session_state['areas_correctas'] else "N/A"
             area_debil = collections.Counter(st.session_state['areas_falladas']).most_common(1)[0][0] if st.session_state['areas_falladas'] else "N/A"
-            
             preg_falladas_str = " | ".join(st.session_state['preguntas_falladas']) if st.session_state['preguntas_falladas'] else "Ninguna"
 
             st.metric(label="Tu Calificación Final", value=f"{calificacion_base10} / 10")
             
-            # CANDADO DE GUARDADO
             if not st.session_state.get('examen_guardado', False):
                 cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Fecha"]
                 try:
@@ -451,18 +457,28 @@ MENU_DEMO = "💻 Equipos Demo"
 MENU_CAPA = "🎓 Capacitación (Admin)"
 MENU_USR = "⚙️ Panel de Usuarios"
 
-st.sidebar.markdown(f"👤 **Usuario:** {st.session_state['usuario']}")
-st.sidebar.markdown(f"🛡️ **Rol:** {st.session_state['rol']}")
+st.sidebar.markdown(f"👤 **Usuario:** {st.session_state.get('usuario', '')}")
+st.sidebar.markdown(f"🛡️ **Área de Acceso:** {st.session_state.get('area', 'No asignada')}")
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state['logeado_staff'] = False
     st.rerun()
 
 st.sidebar.markdown("---")
-opciones_menu = [MENU_DASH, MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO]
 
-if st.session_state['rol'] == 'Admin':
-    opciones_menu.append(MENU_CAPA)
-    opciones_menu.append(MENU_USR)
+# --- LÓGICA DE CONTROL DE ACCESOS POR ÁREA ---
+area_actual = st.session_state.get('area', '')
+opciones_menu = []
+
+if area_actual == 'Admin':
+    opciones_menu = [MENU_DASH, MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO, MENU_CAPA, MENU_USR]
+elif area_actual == 'Servicio':
+    opciones_menu = [MENU_DASH, MENU_SERV, MENU_EVE, MENU_INV, MENU_DEMO]
+elif area_actual == 'Aplicaciones':
+    opciones_menu = [MENU_DASH, MENU_MKT, MENU_EVE, MENU_DEMO, MENU_CAPA]
+elif area_actual == 'Invitado':
+    opciones_menu = [MENU_DASH, MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO]
+else:
+    opciones_menu = [MENU_DASH]
 
 division = st.sidebar.radio("Selecciona la División:", opciones_menu)
 st.title("Panel de Control Sincronizado")
@@ -527,7 +543,7 @@ if division == MENU_DASH:
     
     with col_boton:
         st.write("") 
-        if st.session_state['rol'] == 'Admin':
+        if st.session_state.get('area') == 'Admin':
             resumen_dict = {
                 "Métrica": ["Casos de Servicio Activos", "Equipos a Préstamo", "Casos Pendientes"],
                 "Total": [casos_activos, equipos_prestados, casos_pendientes],
@@ -603,10 +619,10 @@ elif division == MENU_SERV:
                         df_servicio.at[index, 'Estatus'] = 'Activo'
                         hubo_cambios = True
                 except ValueError: pass
-        if hubo_cambios and st.session_state['rol'] != 'Solo Lectura': 
+        if hubo_cambios and st.session_state.get('area') != 'Invitado': 
             conn_servicio.update(data=df_servicio)
 
-    if st.session_state['rol'] != 'Solo Lectura':
+    if st.session_state.get('area') != 'Invitado':
         tab_reg, tab_edit = st.tabs(["➕ Registrar / Actualizar", "✏️ Editar Caso"])
         
         with tab_reg:
@@ -702,7 +718,7 @@ elif division == MENU_SERV:
     if not df_servicio.empty:
         st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
-        if st.session_state['rol'] != 'Solo Lectura':
+        if st.session_state.get('area') != 'Invitado':
             st.write("### ⚙️ Gestionar Casos")
             col_sel, col_up, col_down, col_pend, col_fin, col_del = st.columns([2, 1, 1, 1.5, 1.5, 1])
             with col_sel:
@@ -735,7 +751,7 @@ elif division == MENU_SERV:
                     df_servicio.at[idx, 'Fecha de cierre'] = str(hoy)
                     conn_servicio.update(data=df_servicio); st.success("Caso finalizado."); st.rerun()
                     
-            if st.session_state['rol'] == 'Admin':
+            if st.session_state.get('area') == 'Admin':
                 with col_del:
                     st.write(""); st.write("")
                     if st.button("🗑️ Borrar Caso"):
@@ -743,6 +759,7 @@ elif division == MENU_SERV:
                         st.success("Caso eliminado."); st.rerun()
     else:
         st.info("No hay casos registrados actualmente.")
+
 
 # ==========================================
 # DIVISIÓN: MARKETING
@@ -784,10 +801,10 @@ elif division == MENU_MKT:
                         elif dias_lic_restantes < 0: st.error(f"🚫 **LICENCIA CADUCADA:** Contraseña de '{row['Equipo']}' de '{row['KOL']}' venció hace {abs(dias_lic_restantes)} días.")
                     except ValueError: pass
                     
-        if hubo_cambios_mkt and st.session_state['rol'] != 'Solo Lectura': 
+        if hubo_cambios_mkt and st.session_state.get('area') != 'Invitado': 
             conn_marketing.update(data=df_marketing)
 
-    if st.session_state['rol'] != 'Solo Lectura':
+    if st.session_state.get('area') != 'Invitado':
         tab_reg_m, tab_edit_m = st.tabs(["➕ Registrar Préstamo", "✏️ Editar Préstamo"])
 
         with tab_reg_m:
@@ -863,7 +880,7 @@ elif division == MENU_MKT:
         columnas_visibles = [c for c in df_marketing.columns if c != "Vencimiento Licencia"]
         st.dataframe(df_marketing[columnas_visibles].style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
-        if st.session_state['rol'] != 'Solo Lectura':
+        if st.session_state.get('area') != 'Invitado':
             st.write("### ⚙️ Gestionar Préstamos y Licencias")
             
             col_sel_m, col_up_m, col_down_m, col_ren_lic, col_ren_dev, col_fin_m, col_del_m = st.columns([1.5, 0.5, 0.5, 1.5, 1.5, 1, 1])
@@ -919,7 +936,7 @@ elif division == MENU_MKT:
                     df_marketing.at[idx, 'Estado'] = 'Finalizado'
                     conn_marketing.update(data=df_marketing); st.success("Préstamo finalizado."); st.rerun()
                     
-            if st.session_state['rol'] == 'Admin':
+            if st.session_state.get('area') == 'Admin':
                 with col_del_m:
                     st.write(""); st.write("")
                     if st.button("🗑️ Borrar"):
@@ -927,6 +944,7 @@ elif division == MENU_MKT:
                         st.success("Préstamo eliminado."); st.rerun()
     else:
         st.info("No hay préstamos registrados actualmente.")
+
 
 # ==========================================
 # DIVISIÓN: EVENTOS
@@ -941,7 +959,7 @@ elif division == MENU_EVE:
     except:
         df_eventos = pd.DataFrame(columns=cols_eve)
         
-    if st.session_state['rol'] != 'Solo Lectura':
+    if st.session_state.get('area') != 'Invitado':
         tab_reg_e, tab_edit_e = st.tabs(["➕ Registrar Evento", "✏️ Editar Evento"])
         
         with tab_reg_e:
@@ -985,7 +1003,7 @@ elif division == MENU_EVE:
     if not df_eventos.empty:
         st.dataframe(df_eventos, use_container_width=True, hide_index=True)
         
-        if st.session_state['rol'] != 'Solo Lectura':
+        if st.session_state.get('area') != 'Invitado':
             st.write("### ⚙️ Gestionar Eventos")
             col_sel, col_up, col_dw, col_del = st.columns([2, 1, 1, 2])
             with col_sel:
@@ -1000,7 +1018,7 @@ elif division == MENU_EVE:
                 if st.button("⬇️", key="dw_e"):
                     df_eventos = mover_fila(df_eventos, id_gest_e, 'down')
                     conn_marketing.update(worksheet="Eventos", data=df_eventos); st.rerun()
-            if st.session_state['rol'] == 'Admin':
+            if st.session_state.get('area') == 'Admin':
                 with col_del:
                     st.write(""); st.write("")
                     if st.button("🗑️ Borrar Evento"):
@@ -1008,6 +1026,7 @@ elif division == MENU_EVE:
                         st.success("Evento eliminado."); st.rerun()
     else:
         st.info("No hay eventos registrados.")
+
 
 # ==========================================
 # DIVISIÓN: INVENTARIO DE REFACCIONES
@@ -1024,7 +1043,7 @@ elif division == MENU_INV:
         except:
             df_nuevas = pd.DataFrame(columns=cols_nuevas)
             
-        if st.session_state['rol'] != 'Solo Lectura':
+        if st.session_state.get('area') != 'Invitado':
             with st.expander("➕ Registrar Pieza Nueva"):
                 with st.form("form_nva_pieza", clear_on_submit=True):
                     c1, c2, c3 = st.columns(3)
@@ -1054,7 +1073,7 @@ elif division == MENU_INV:
         if not df_nuevas.empty:
             st.dataframe(df_nuevas, use_container_width=True, hide_index=True)
             
-            if st.session_state['rol'] != 'Solo Lectura':
+            if st.session_state.get('area') != 'Invitado':
                 st.write("### ⚙️ Gestionar Piezas Nuevas")
                 with st.expander("✏️ Editar Pieza Nueva"):
                     id_ed_n = st.selectbox("Selecciona ID a editar:", df_nuevas['ID'].unique(), key="edit_sel_n")
@@ -1098,7 +1117,7 @@ elif division == MENU_INV:
                                 else:
                                     st.info("No se detectaron cambios.")
                 
-                if st.session_state['rol'] == 'Admin':
+                if st.session_state.get('area') == 'Admin':
                     id_borrar_n = st.selectbox("Selecciona ID a borrar (Nuevas):", df_nuevas['ID'].unique(), key="del_nv")
                     if st.button("🗑️ Borrar Pieza Nueva"):
                         eliminar_registro_gsheets(conn_servicio, df_nuevas, id_borrar_n, "Inv_Nuevas")
@@ -1114,7 +1133,7 @@ elif division == MENU_INV:
         except:
             df_danadas = pd.DataFrame(columns=cols_danadas)
             
-        if st.session_state['rol'] != 'Solo Lectura':
+        if st.session_state.get('area') != 'Invitado':
             with st.expander("➕ Registrar Pieza Dañada"):
                 with st.form("form_danada", clear_on_submit=True):
                     c1, c2, c3 = st.columns(3)
@@ -1147,7 +1166,7 @@ elif division == MENU_INV:
         if not df_danadas.empty:
             st.dataframe(df_danadas, use_container_width=True, hide_index=True)
             
-            if st.session_state['rol'] != 'Solo Lectura':
+            if st.session_state.get('area') != 'Invitado':
                 st.write("### ⚙️ Gestionar Piezas Dañadas")
                 with st.expander("✏️ Editar Pieza Dañada"):
                     id_ed_d = st.selectbox("Selecciona ID a editar:", df_danadas['ID'].unique(), key="edit_sel_d")
@@ -1190,13 +1209,14 @@ elif division == MENU_INV:
                                 else:
                                     st.info("No se detectaron cambios.")
                 
-                if st.session_state['rol'] == 'Admin':
+                if st.session_state.get('area') == 'Admin':
                     id_borrar_d = st.selectbox("Selecciona ID a borrar (Dañadas):", df_danadas['ID'].unique(), key="del_da")
                     if st.button("🗑️ Borrar Pieza Dañada"):
                         eliminar_registro_gsheets(conn_servicio, df_danadas, id_borrar_d, "Inv_Danadas")
                         st.success("Pieza eliminada."); st.rerun()
         else:
             st.info("No hay piezas dadas de baja registradas.")
+
 
 # ==========================================
 # DIVISIÓN: EQUIPOS DEMO
@@ -1241,7 +1261,7 @@ elif division == MENU_DEMO:
             st.warning("Estos equipos no aparecen arriba porque actualmente están asignados a un KOL en Marketing.")
             st.dataframe(df_demo_prestados, use_container_width=True, hide_index=True)
 
-    if st.session_state['rol'] != 'Solo Lectura':
+    if st.session_state.get('area') != 'Invitado':
         st.write("---")
         st.write("### ⚙️ Administración de Catálogo de Equipos Demo")
         tab_alta_d, tab_edit_d = st.tabs(["➕ Registrar Equipo Demo", "✏️ Editar / Eliminar Equipo"])
@@ -1305,7 +1325,7 @@ elif division == MENU_DEMO:
                             else:
                                 st.info("Sin cambios detectados.")
 
-                    if st.session_state['rol'] == 'Admin':
+                    if st.session_state.get('area') == 'Admin':
                         st.write("⚠️ **Zona de peligro (Admin):**")
                         if st.button("🗑️ Eliminar permanentemente de la Base de Datos"):
                             eliminar_registro_gsheets(conn_marketing, df_demo, id_ed_demo, "Equipos_Demo")
@@ -1320,58 +1340,70 @@ elif division == MENU_DEMO:
 elif division == MENU_CAPA:
     st.header("🎓 Administración de Capacitación (LMS)")
     
-    # ---> TERCERA PESTAÑA DE CONFIGURACIÓN <---
-    tab_usrs, tab_res, tab_conf = st.tabs(["👥 Usuarios de Distribuidores", "📈 Resultados y Análisis", "⚙️ Configuración"])
-    
-    with tab_usrs:
-        st.subheader("Contraseñas y Accesos")
-        try:
-            df_usr_ex = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0).dropna(how='all')
-            if not df_usr_ex.empty:
-                st.dataframe(df_usr_ex, use_container_width=True, hide_index=True)
-                
-                if st.session_state['rol'] == 'Admin':
-                    st.markdown("---")
-                    st.write("### ⚙️ Gestionar Distribuidores")
+    # --- RENDERIZADO DINÁMICO DE PESTAÑAS SEGÚN EL ÁREA ---
+    if st.session_state.get('area') == 'Aplicaciones':
+        # Aplicaciones solo ve Resultados y Análisis
+        tabs = st.tabs(["📈 Resultados y Análisis"])
+        tab_res = tabs[0]
+        tab_usrs = None
+        tab_conf = None
+    else:
+        # Admin ve todo
+        tabs = st.tabs(["👥 Usuarios de Distribuidores", "📈 Resultados y Análisis", "⚙️ Configuración"])
+        tab_usrs = tabs[0]
+        tab_res = tabs[1]
+        tab_conf = tabs[2]
+        
+    if tab_usrs is not None:
+        with tab_usrs:
+            st.subheader("Contraseñas y Accesos")
+            try:
+                df_usr_ex = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0).dropna(how='all')
+                if not df_usr_ex.empty:
+                    st.dataframe(df_usr_ex, use_container_width=True, hide_index=True)
                     
-                    usuario_a_gestionar = st.selectbox("Selecciona el Usuario a gestionar:", df_usr_ex['Usuario'].unique())
-                    
-                    if usuario_a_gestionar:
-                        idx_usr = df_usr_ex.index[df_usr_ex['Usuario'] == usuario_a_gestionar].tolist()[0]
+                    if st.session_state.get('area') == 'Admin':
+                        st.markdown("---")
+                        st.write("### ⚙️ Gestionar Distribuidores")
                         
-                        tab_editar_usr, tab_borrar_usr = st.tabs(["✏️ Editar Usuario", "🗑️ Eliminar Usuario"])
+                        usuario_a_gestionar = st.selectbox("Selecciona el Usuario a gestionar:", df_usr_ex['Usuario'].unique())
                         
-                        with tab_editar_usr:
-                            with st.form("form_edit_distribuidor"):
-                                e_pass = st.text_input("Contraseña", value=df_usr_ex.at[idx_usr, 'Password'])
-                                e_dist = st.text_input("Distribuidor/Empresa", value=df_usr_ex.at[idx_usr, 'Distribuidor'])
-                                
-                                if st.form_submit_button("💾 Guardar Cambios"):
-                                    df_usr_ex.at[idx_usr, 'Password'] = str(e_pass).strip()
-                                    df_usr_ex.at[idx_usr, 'Distribuidor'] = str(e_dist).strip()
-                                    conn_servicio.update(worksheet="Usuarios_Examenes", data=df_usr_ex)
-                                    st.success(f"Usuario {usuario_a_gestionar} actualizado exitosamente.")
+                        if usuario_a_gestionar:
+                            idx_usr = df_usr_ex.index[df_usr_ex['Usuario'] == usuario_a_gestionar].tolist()[0]
+                            
+                            tab_editar_usr, tab_borrar_usr = st.tabs(["✏️ Editar Usuario", "🗑️ Eliminar Usuario"])
+                            
+                            with tab_editar_usr:
+                                with st.form("form_edit_distribuidor"):
+                                    e_pass = st.text_input("Contraseña", value=df_usr_ex.at[idx_usr, 'Password'])
+                                    e_dist = st.text_input("Distribuidor/Empresa", value=df_usr_ex.at[idx_usr, 'Distribuidor'])
+                                    
+                                    if st.form_submit_button("💾 Guardar Cambios"):
+                                        df_usr_ex.at[idx_usr, 'Password'] = str(e_pass).strip()
+                                        df_usr_ex.at[idx_usr, 'Distribuidor'] = str(e_dist).strip()
+                                        conn_servicio.update(worksheet="Usuarios_Examenes", data=df_usr_ex)
+                                        st.success(f"Usuario {usuario_a_gestionar} actualizado exitosamente.")
+                                        st.rerun()
+                                        
+                            with tab_borrar_usr:
+                                st.warning(f"¿Estás seguro de que deseas eliminar al usuario **{usuario_a_gestionar}**? Esta acción no se puede deshacer.")
+                                if st.button("🚨 Sí, eliminar usuario"):
+                                    df_nuevo_usr = df_usr_ex.drop(idx_usr).reset_index(drop=True)
+                                    diferencia = len(df_usr_ex) - len(df_nuevo_usr)
+                                    
+                                    if diferencia > 0:
+                                        filas_vacias = pd.DataFrame([[""] * len(df_usr_ex.columns)] * diferencia, columns=df_usr_ex.columns)
+                                        df_escritura = pd.concat([df_nuevo_usr, filas_vacias], ignore_index=True)
+                                        conn_servicio.update(worksheet="Usuarios_Examenes", data=df_escritura)
+                                    else:
+                                        conn_servicio.update(worksheet="Usuarios_Examenes", data=df_nuevo_usr)
+                                        
+                                    st.success("Usuario eliminado correctamente.")
                                     st.rerun()
-                                    
-                        with tab_borrar_usr:
-                            st.warning(f"¿Estás seguro de que deseas eliminar al usuario **{usuario_a_gestionar}**? Esta acción no se puede deshacer.")
-                            if st.button("🚨 Sí, eliminar usuario"):
-                                df_nuevo_usr = df_usr_ex.drop(idx_usr).reset_index(drop=True)
-                                diferencia = len(df_usr_ex) - len(df_nuevo_usr)
-                                
-                                if diferencia > 0:
-                                    filas_vacias = pd.DataFrame([[""] * len(df_usr_ex.columns)] * diferencia, columns=df_usr_ex.columns)
-                                    df_escritura = pd.concat([df_nuevo_usr, filas_vacias], ignore_index=True)
-                                    conn_servicio.update(worksheet="Usuarios_Examenes", data=df_escritura)
-                                else:
-                                    conn_servicio.update(worksheet="Usuarios_Examenes", data=df_nuevo_usr)
-                                    
-                                st.success("Usuario eliminado correctamente.")
-                                st.rerun()
-            else:
-                st.info("Aún no hay distribuidores registrados.")
-        except Exception as e:
-            st.info(f"La pestaña 'Usuarios_Examenes' aún no existe en Google Sheets o hay un error. (Detalle: {e})")
+                else:
+                    st.info("Aún no hay distribuidores registrados.")
+            except Exception as e:
+                st.info(f"La pestaña 'Usuarios_Examenes' aún no existe en Google Sheets o hay un error. (Detalle: {e})")
             
     with tab_res:
         st.subheader("Desempeño Global")
@@ -1412,7 +1444,13 @@ elif division == MENU_CAPA:
                     
                 st.markdown("---")
                 if HAS_FPDF:
-                    distribuidor_selec = st.selectbox("Generar Reporte PDF para el Distribuidor:", df_usr_ex['Distribuidor'].unique() if not df_usr_ex.empty else ["N/A"])
+                    # Para el selectbox, si la tabla de usuarios no está cargada (como en el caso de Aplicaciones), hacemos un fallback de lectura rápida.
+                    try: 
+                        lista_distribuidores = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0).dropna(how='all')['Distribuidor'].unique()
+                    except:
+                        lista_distribuidores = ["N/A"]
+
+                    distribuidor_selec = st.selectbox("Generar Reporte PDF para el Distribuidor:", lista_distribuidores)
                     if st.button("📄 Descargar PDF de Desempeño"):
                         if distribuidor_selec != "N/A":
                             pdf = FPDF()
@@ -1430,8 +1468,13 @@ elif division == MENU_CAPA:
                             pdf.cell(200, 10, txt="Resultados de Evaluaciones:", ln=True)
                             
                             pdf.set_font("Arial", '', 10)
-                            usuarios_dist = df_usr_ex[df_usr_ex['Distribuidor'] == distribuidor_selec]['Usuario'].tolist()
-                            resultados_filtro = df_res_ex[df_res_ex['Usuario'].isin(usuarios_dist)]
+                            # Extraer usuarios de ese distribuidor
+                            try:
+                                df_usr_temp = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0).dropna(how='all')
+                                usuarios_dist = df_usr_temp[df_usr_temp['Distribuidor'] == distribuidor_selec]['Usuario'].tolist()
+                                resultados_filtro = df_res_ex[df_res_ex['Usuario'].isin(usuarios_dist)]
+                            except:
+                                resultados_filtro = pd.DataFrame()
                             
                             if not resultados_filtro.empty:
                                 for _, row in resultados_filtro.iterrows():
@@ -1456,43 +1499,41 @@ elif division == MENU_CAPA:
         except:
             st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
             
-    with tab_conf:
-        st.subheader("Parámetros Generales del Sistema")
-        try:
-            df_config = conn_servicio.read(worksheet="Configuracion", ttl=0)
-            df_config = preparar_df(df_config, ["Parametro", "Valor"]).fillna("")
-        except:
-            df_config = pd.DataFrame(columns=["Parametro", "Valor"])
-
-        if not df_config.empty and "Tiempo_Pregunta_Segundos" in df_config['Parametro'].values:
-            # Buscar el valor actual de forma segura
+    if tab_conf is not None:
+        with tab_conf:
+            st.subheader("Parámetros Generales del Sistema")
             try:
-                val = df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'].iloc[0]
-                tiempo_actual = int(float(val))
+                df_config = conn_servicio.read(worksheet="Configuracion", ttl=0)
+                df_config = preparar_df(df_config, ["Parametro", "Valor"]).fillna("")
             except:
-                tiempo_actual = 120 
-        else:
-            tiempo_actual = 120 
-            
-        with st.form("form_config_exam"):
-            nvo_tiempo = st.number_input("⏱️ Tiempo máximo por pregunta (en segundos):", min_value=10, max_value=600, value=tiempo_actual, step=10)
-            st.caption("Ejemplo: 60 = 1 minuto | 120 = 2 minutos | 180 = 3 minutos")
-            
-            if st.form_submit_button("💾 Guardar Configuración"):
-                # Forzamos que la columna sea de texto para que Pandas no lance TypeError
-                if not df_config.empty and 'Valor' in df_config.columns:
-                    df_config['Valor'] = df_config['Valor'].astype(str)
+                df_config = pd.DataFrame(columns=["Parametro", "Valor"])
 
-                if df_config.empty or "Tiempo_Pregunta_Segundos" not in df_config['Parametro'].values:
-                    nvo_reg = pd.DataFrame([{"Parametro": "Tiempo_Pregunta_Segundos", "Valor": str(nvo_tiempo)}])
-                    df_config = pd.concat([df_config, nvo_reg], ignore_index=True)
-                else:
-                    # Método más seguro para reemplazar el valor sin modificar tipos enteros accidentalmente
-                    df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'] = str(nvo_tiempo)
+            if not df_config.empty and "Tiempo_Pregunta_Segundos" in df_config['Parametro'].values:
+                try:
+                    val = df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'].iloc[0]
+                    tiempo_actual = int(float(val))
+                except:
+                    tiempo_actual = 120 
+            else:
+                tiempo_actual = 120 
                 
-                conn_servicio.update(worksheet="Configuracion", data=df_config)
-                st.success(f"Tiempo actualizado correctamente a {nvo_tiempo} segundos.")
-                st.rerun()
+            with st.form("form_config_exam"):
+                nvo_tiempo = st.number_input("⏱️ Tiempo máximo por pregunta (en segundos):", min_value=10, max_value=600, value=tiempo_actual, step=10)
+                st.caption("Ejemplo: 60 = 1 minuto | 120 = 2 minutos | 180 = 3 minutos")
+                
+                if st.form_submit_button("💾 Guardar Configuración"):
+                    if not df_config.empty and 'Valor' in df_config.columns:
+                        df_config['Valor'] = df_config['Valor'].astype(str)
+
+                    if df_config.empty or "Tiempo_Pregunta_Segundos" not in df_config['Parametro'].values:
+                        nvo_reg = pd.DataFrame([{"Parametro": "Tiempo_Pregunta_Segundos", "Valor": str(nvo_tiempo)}])
+                        df_config = pd.concat([df_config, nvo_reg], ignore_index=True)
+                    else:
+                        df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'] = str(nvo_tiempo)
+                    
+                    conn_servicio.update(worksheet="Configuracion", data=df_config)
+                    st.success(f"Tiempo actualizado correctamente a {nvo_tiempo} segundos.")
+                    st.rerun()
 
 
 # ==========================================
@@ -1502,19 +1543,30 @@ elif division == MENU_USR:
     st.header("Gestión de Usuarios del CRM (Staff)")
     
     df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
+    
+    # Nos aseguramos de que el dataframe muestre la columna Área si existe, si no, le ponemos por defecto "No asignada" visualmente
+    if 'Area' not in df_usuarios.columns:
+        df_usuarios['Area'] = "No asignada"
+        
     st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
     
     with st.expander("➕ Crear Nuevo Usuario de Staff", expanded=False):
         with st.form("nuevo_usuario", clear_on_submit=True):
             nuevo_user = st.text_input("Nombre de Usuario")
             nuevo_pass = st.text_input("Contraseña")
-            nuevo_rol = st.selectbox("Rol", ["Usuario", "Admin", "Solo Lectura"])
+            nuevo_area = st.selectbox("Área de Acceso", ["Admin", "Servicio", "Aplicaciones", "Invitado"])
             
             if st.form_submit_button("Crear Usuario"):
                 if nuevo_user and nuevo_pass:
-                    fila_user = pd.DataFrame([{"Usuario": str(nuevo_user).strip(), "Password": str(nuevo_pass).strip(), "Rol": str(nuevo_rol).strip(), "Ultimo Acceso": ""}])
+                    fila_user = pd.DataFrame([{
+                        "Usuario": str(nuevo_user).strip(), 
+                        "Password": str(nuevo_pass).strip(), 
+                        "Rol": str(nuevo_area).strip(), # Mantenemos Rol igual al área por retrocompatibilidad
+                        "Area": str(nuevo_area).strip(),
+                        "Ultimo Acceso": ""
+                    }])
                     conn_servicio.update(worksheet="Usuarios", data=pd.concat([df_usuarios, fila_user], ignore_index=True))
-                    st.success(f"Usuario '{nuevo_user}' creado exitosamente."); st.rerun()
+                    st.success(f"Usuario '{nuevo_user}' creado exitosamente en el área de {nuevo_area}."); st.rerun()
                 else:
                     st.error("Por favor, llena todos los campos.")
                     
