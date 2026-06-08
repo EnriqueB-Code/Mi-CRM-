@@ -21,10 +21,12 @@ def inicializar_estado():
         'logeado_dist': False,
         'usuario': "",
         'rol': "",
-        'area': "", # NUEVA VARIABLE MAESTRA DE PERMISOS
+        'area': "",
         'serie_key': 0,
         'exam_in_progress': False,
         'examen_actual': None,
+        'df_examen_actual': None, # NUEVO: Guarda el examen en memoria para no saturar la API
+        'tiempo_limite': 120,     # NUEVO: Guarda el tiempo en memoria
         'q_index': 0,
         'respuestas_correctas': 0,
         'areas_correctas': [],
@@ -177,7 +179,6 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                         st.session_state['logeado_staff'] = True
                         st.session_state['usuario'] = str(user_input).strip()
                         
-                        # --- RETROCOMPATIBILIDAD Y MAPEO DE ÁREA ---
                         area_asignada = ""
                         if 'Area' in valido.columns and pd.notna(valido.iloc[0]['Area']) and str(valido.iloc[0]['Area']).strip() != "":
                             area_asignada = str(valido.iloc[0]['Area']).strip()
@@ -185,7 +186,7 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                             rol_antiguo = str(valido.iloc[0]['Rol']).strip()
                             if rol_antiguo == "Admin": area_asignada = "Admin"
                             elif rol_antiguo == "Solo Lectura": area_asignada = "Invitado"
-                            else: area_asignada = "Servicio" # Default para usuarios viejos
+                            else: area_asignada = "Servicio" 
                         else:
                             area_asignada = "Invitado"
                             
@@ -204,19 +205,20 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
     
     elif portal_seleccionado == "🎓 Portal de Distribuidores (Capacitación)":
         tab_log_dist, tab_reg_dist = st.tabs(["🔑 Iniciar Sesión", "📝 Crear Cuenta Nueva"])
-        
         cols_usr_exam = ["Usuario", "Password", "Distribuidor", "Fecha_Registro"]
-        try:
-            df_usr_exam = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0)
-            df_usr_exam = preparar_df(df_usr_exam, cols_usr_exam)
-        except:
-            df_usr_exam = pd.DataFrame(columns=cols_usr_exam)
 
         with tab_log_dist:
             with st.form("form_log_dist"):
                 u_dist = st.text_input("Usuario Distribuidor")
                 p_dist = st.text_input("Contraseña", type="password")
                 if st.form_submit_button("Entrar a mis Exámenes"):
+                    # REPARACIÓN LIMIT RATE: Leemos la BD SOLO cuando el botón es presionado.
+                    try:
+                        df_usr_exam = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0)
+                        df_usr_exam = preparar_df(df_usr_exam, cols_usr_exam)
+                    except:
+                        df_usr_exam = pd.DataFrame(columns=cols_usr_exam)
+                        
                     if not df_usr_exam.empty:
                         df_usr_exam['Usuario'] = df_usr_exam['Usuario'].astype(str).str.strip()
                         df_usr_exam['Password'] = df_usr_exam['Password'].astype(str).str.strip()
@@ -227,7 +229,7 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                         if not valido_dist.empty:
                             st.session_state['logeado_dist'] = True
                             st.session_state['usuario'] = str(u_dist).strip()
-                            st.session_state['rol'] = "Distribuidor_Examen" # Se mantiene para portal examen
+                            st.session_state['rol'] = "Distribuidor_Examen" 
                             st.rerun()
                         else:
                             st.error("❌ Credenciales incorrectas. Si eres nuevo, ve a la pestaña 'Crear Cuenta'.")
@@ -242,6 +244,13 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                 empresa_dist = st.text_input("Empresa / Distribuidor al que perteneces")
                 
                 if st.form_submit_button("Registrarme"):
+                    # REPARACIÓN LIMIT RATE: Solo leemos BD si oprimen el botón
+                    try:
+                        df_usr_exam = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0)
+                        df_usr_exam = preparar_df(df_usr_exam, cols_usr_exam)
+                    except:
+                        df_usr_exam = pd.DataFrame(columns=cols_usr_exam)
+
                     if nvo_u_dist and nvo_p_dist and empresa_dist:
                         existe = False
                         if not df_usr_exam.empty:
@@ -272,34 +281,35 @@ if st.session_state['logeado_dist']:
         st.session_state['logeado_dist'] = False
         st.session_state['exam_in_progress'] = False
         st.session_state['examen_actual'] = None
+        st.session_state['df_examen_actual'] = None
         st.rerun()
     st.markdown("---")
 
-    try:
-        df_config_ex = conn_servicio.read(worksheet="Configuracion", ttl=60).dropna(how='all')
-        if not df_config_ex.empty and "Tiempo_Pregunta_Segundos" in df_config_ex['Parametro'].values:
-            idx_c = df_config_ex.index[df_config_ex['Parametro'] == "Tiempo_Pregunta_Segundos"].tolist()[0]
-            TIEMPO_LIMITE = int(float(df_config_ex.at[idx_c, 'Valor']))
-        else:
-            TIEMPO_LIMITE = 120 
-    except:
-        TIEMPO_LIMITE = 120
-        
-    tiempo_texto = f"{TIEMPO_LIMITE // 60} minutos" if TIEMPO_LIMITE % 60 == 0 else f"{TIEMPO_LIMITE} segundos"
-
-    try:
-        df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=600).dropna(how='all')
-    except Exception as e:
-        st.error(f"No se pudo cargar el examen. Contacta al administrador.")
-        st.stop()
-
-    if df_banco.empty:
-        st.info("No hay exámenes disponibles en este momento.")
-        st.stop()
-
-    examenes_disponibles = df_banco['Examen'].dropna().unique().tolist()
-
     if not st.session_state['exam_in_progress']:
+        # SOLO CONSULTAMOS A GOOGLE SHEETS ANTES DE INICIAR EL EXAMEN
+        try:
+            df_config_ex = conn_servicio.read(worksheet="Configuracion", ttl=60).dropna(how='all')
+            if not df_config_ex.empty and "Tiempo_Pregunta_Segundos" in df_config_ex['Parametro'].values:
+                idx_c = df_config_ex.index[df_config_ex['Parametro'] == "Tiempo_Pregunta_Segundos"].tolist()[0]
+                TIEMPO_LIMITE_BD = int(float(df_config_ex.at[idx_c, 'Valor']))
+            else:
+                TIEMPO_LIMITE_BD = 120 
+        except:
+            TIEMPO_LIMITE_BD = 120
+            
+        tiempo_texto = f"{TIEMPO_LIMITE_BD // 60} minutos" if TIEMPO_LIMITE_BD % 60 == 0 else f"{TIEMPO_LIMITE_BD} segundos"
+
+        try:
+            df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=60).dropna(how='all')
+        except Exception as e:
+            st.error(f"No se pudo cargar el examen. Contacta al administrador.")
+            st.stop()
+
+        if df_banco.empty:
+            st.info("No hay exámenes disponibles en este momento.")
+            st.stop()
+
+        examenes_disponibles = df_banco['Examen'].dropna().unique().tolist()
         st.subheader("Tus Evaluaciones Disponibles")
         examen_sel = st.selectbox("Selecciona el examen a realizar:", examenes_disponibles)
         
@@ -308,7 +318,8 @@ if st.session_state['logeado_dist']:
         bloqueado = False
         if st.session_state['usuario'].lower() != "admin_pruebas":
             try:
-                df_res_val = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0).dropna(how='all')
+                # ttl=15 ayuda a no agotar peticiones de golpe
+                df_res_val = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
                 
                 if not df_res_val.empty and 'Calificacion' in df_res_val.columns and 'Fecha' in df_res_val.columns:
                     historial = df_res_val[(df_res_val['Usuario'] == st.session_state['usuario']) & (df_res_val['Examen'] == examen_sel)].copy()
@@ -348,10 +359,17 @@ if st.session_state['logeado_dist']:
                 st.session_state['preguntas_falladas'] = []
                 st.session_state['q_start_time'] = datetime.now()
                 st.session_state['examen_guardado'] = False 
+                
+                # REPARACIÓN LIMIT RATE: Guardamos el examen en la memoria del navegador.
+                st.session_state['df_examen_actual'] = df_banco[df_banco['Examen'] == examen_sel].reset_index(drop=True)
+                st.session_state['tiempo_limite'] = TIEMPO_LIMITE_BD
+                
                 st.rerun()
 
     else:
-        df_examen_actual = df_banco[df_banco['Examen'] == st.session_state['examen_actual']].reset_index(drop=True)
+        # EXAMEN EN CURSO: AQUÍ ESTÁ TOTALMENTE PROHIBIDO LLAMAR A conn_servicio.read()
+        df_examen_actual = st.session_state['df_examen_actual']
+        TIEMPO_LIMITE = st.session_state['tiempo_limite']
         total_preguntas = len(df_examen_actual)
         q_idx = st.session_state['q_index']
 
@@ -399,6 +417,7 @@ if st.session_state['logeado_dist']:
                 st.rerun()
                 
         else:
+            # FIN DEL EXAMEN: Volvemos a conectar con Google Sheets solo para guardar.
             calificacion_base10 = round((st.session_state['respuestas_correctas'] / total_preguntas) * 10, 1)
             
             if calificacion_base10 >= 7.0:
@@ -439,6 +458,7 @@ if st.session_state['logeado_dist']:
             if st.button("Volver al Inicio"):
                 st.session_state['exam_in_progress'] = False
                 st.session_state['examen_actual'] = None
+                st.session_state['df_examen_actual'] = None
                 st.session_state['examen_guardado'] = False 
                 st.rerun()
 
@@ -1444,9 +1464,8 @@ elif division == MENU_CAPA:
                     
                 st.markdown("---")
                 if HAS_FPDF:
-                    # Para el selectbox, si la tabla de usuarios no está cargada (como en el caso de Aplicaciones), hacemos un fallback de lectura rápida.
                     try: 
-                        lista_distribuidores = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0).dropna(how='all')['Distribuidor'].unique()
+                        lista_distribuidores = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')['Distribuidor'].unique()
                     except:
                         lista_distribuidores = ["N/A"]
 
@@ -1468,9 +1487,8 @@ elif division == MENU_CAPA:
                             pdf.cell(200, 10, txt="Resultados de Evaluaciones:", ln=True)
                             
                             pdf.set_font("Arial", '', 10)
-                            # Extraer usuarios de ese distribuidor
                             try:
-                                df_usr_temp = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0).dropna(how='all')
+                                df_usr_temp = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')
                                 usuarios_dist = df_usr_temp[df_usr_temp['Distribuidor'] == distribuidor_selec]['Usuario'].tolist()
                                 resultados_filtro = df_res_ex[df_res_ex['Usuario'].isin(usuarios_dist)]
                             except:
@@ -1544,7 +1562,6 @@ elif division == MENU_USR:
     
     df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
     
-    # Nos aseguramos de que el dataframe muestre la columna Área si existe, si no, le ponemos por defecto "No asignada" visualmente
     if 'Area' not in df_usuarios.columns:
         df_usuarios['Area'] = "No asignada"
         
@@ -1561,7 +1578,7 @@ elif division == MENU_USR:
                     fila_user = pd.DataFrame([{
                         "Usuario": str(nuevo_user).strip(), 
                         "Password": str(nuevo_pass).strip(), 
-                        "Rol": str(nuevo_area).strip(), # Mantenemos Rol igual al área por retrocompatibilidad
+                        "Rol": str(nuevo_area).strip(), 
                         "Area": str(nuevo_area).strip(),
                         "Ultimo Acceso": ""
                     }])
