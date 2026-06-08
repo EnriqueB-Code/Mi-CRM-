@@ -355,18 +355,22 @@ if st.session_state['logeado_dist']:
                 correcta = str(pregunta_actual['Respuesta_Correcta']).strip().upper()
                 area = str(pregunta_actual.get('Area_Conocimiento', 'General')).strip()
                 id_p = str(pregunta_actual.get('ID_Pregunta', 'Desconocido')).strip()
+                texto_pregunta = str(pregunta_actual['Pregunta']).strip()
 
+                # --- NUEVA LÓGICA DE REGISTRO DE FALLAS DETALLADAS ---
                 if tiempo_transcurrido > 120:
                     st.error("⏰ ¡Tiempo agotado para esta pregunta!")
                     st.session_state['areas_falladas'].append(area)
-                    st.session_state['preguntas_falladas'].append(id_p)
+                    falla_detalle = f"{id_p}: {texto_pregunta} (Eligió: Tiempo Agotado)"
+                    st.session_state['preguntas_falladas'].append(falla_detalle)
                 else:
                     if respuesta_usuario == correcta:
                         st.session_state['respuestas_correctas'] += 1
                         st.session_state['areas_correctas'].append(area)
                     else:
                         st.session_state['areas_falladas'].append(area)
-                        st.session_state['preguntas_falladas'].append(id_p)
+                        falla_detalle = f"{id_p}: {texto_pregunta} (Eligió: {respuesta_usuario})"
+                        st.session_state['preguntas_falladas'].append(falla_detalle)
                 
                 st.session_state['q_index'] += 1
                 st.session_state['q_start_time'] = datetime.now()
@@ -383,11 +387,13 @@ if st.session_state['logeado_dist']:
                 
             area_fuerte = collections.Counter(st.session_state['areas_correctas']).most_common(1)[0][0] if st.session_state['areas_correctas'] else "N/A"
             area_debil = collections.Counter(st.session_state['areas_falladas']).most_common(1)[0][0] if st.session_state['areas_falladas'] else "N/A"
-            preg_falladas_str = ", ".join(st.session_state['preguntas_falladas']) if st.session_state['preguntas_falladas'] else "Ninguna"
+            
+            # Se guardan las fallas separadas por " | " para que sea más legible en Google Sheets
+            preg_falladas_str = " | ".join(st.session_state['preguntas_falladas']) if st.session_state['preguntas_falladas'] else "Ninguna"
 
             st.metric(label="Tu Calificación Final", value=f"{calificacion_base10} / 10")
             
-            # ---> AQUÍ ESTÁ LA SOLUCIÓN DEL CANDADO <---
+            # CANDADO DE GUARDADO
             if not st.session_state.get('examen_guardado', False):
                 cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Fecha"]
                 try:
@@ -1313,7 +1319,7 @@ elif division == MENU_CAPA:
             if not df_usr_ex.empty:
                 st.dataframe(df_usr_ex, use_container_width=True, hide_index=True)
                 
-                # ---> AQUÍ ESTÁ LA NUEVA SECCIÓN DE EDICIÓN Y BORRADO <---
+                # ---> SECCIÓN DE EDICIÓN Y BORRADO DE DISTRIBUIDORES <---
                 if st.session_state['rol'] == 'Admin':
                     st.markdown("---")
                     st.write("### ⚙️ Gestionar Distribuidores")
@@ -1340,7 +1346,6 @@ elif division == MENU_CAPA:
                         with tab_borrar_usr:
                             st.warning(f"¿Estás seguro de que deseas eliminar al usuario **{usuario_a_gestionar}**? Esta acción no se puede deshacer.")
                             if st.button("🚨 Sí, eliminar usuario"):
-                                # Se elimina de manera limpia para no dejar filas fantasma en Sheets
                                 df_nuevo_usr = df_usr_ex.drop(idx_usr).reset_index(drop=True)
                                 diferencia = len(df_usr_ex) - len(df_nuevo_usr)
                                 
@@ -1378,7 +1383,23 @@ elif division == MENU_CAPA:
                     lista_ids = []
                     for f in todas_las_fallas:
                         if f != "Ninguna":
-                            lista_ids.extend([x.strip() for x in f.split(",")])
+                            # Motor de compatibilidad: Soporta comas (viejo) y " | " (nuevo detallado)
+                            if " | " in f:
+                                items = f.split(" | ")
+                            else:
+                                items = f.split(",")
+                                
+                            for item in items:
+                                item = item.strip()
+                                if not item: continue
+                                
+                                # Si tiene formato detallado "ID: Texto (Eligió: X)", extraemos solo el ID para conteo
+                                if ":" in item and "(Eligió:" in item:
+                                    q_id = item.split(":")[0].strip()
+                                    lista_ids.append(q_id)
+                                else:
+                                    lista_ids.append(item)
+                                    
                     pregunta_peor = collections.Counter(lista_ids).most_common(1)[0][0] if lista_ids else "Ninguna"
                     st.metric("ID Pregunta Más Fallada", str(pregunta_peor))
                     
