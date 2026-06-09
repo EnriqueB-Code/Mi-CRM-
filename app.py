@@ -33,6 +33,7 @@ def inicializar_estado():
         'areas_falladas': [],
         'preguntas_falladas': [],
         'q_start_time': None,
+        'exam_start_time': None,  # Cronómetro total
         'examen_guardado': False
     }
     for key, value in defaults.items():
@@ -347,6 +348,7 @@ if st.session_state['logeado_dist']:
             if st.button("🚀 Comenzar Examen", type="primary"):
                 st.session_state['exam_in_progress'] = True
                 st.session_state['examen_actual'] = examen_sel
+                st.session_state['exam_start_time'] = datetime.now()
                 st.session_state['q_index'] = 0
                 st.session_state['respuestas_correctas'] = 0
                 st.session_state['areas_correctas'] = []
@@ -423,7 +425,12 @@ if st.session_state['logeado_dist']:
             st.metric(label="Tu Calificación Final", value=f"{calificacion_base10} / 10")
             
             if not st.session_state.get('examen_guardado', False):
-                cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Fecha"]
+                tiempo_total_segundos = (datetime.now() - st.session_state['exam_start_time']).total_seconds()
+                minutos = int(tiempo_total_segundos // 60)
+                segundos = int(tiempo_total_segundos % 60)
+                tiempo_texto = f"{minutos}m {segundos}s"
+
+                cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Tiempo_Total", "Fecha"]
                 try:
                     df_resultados = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0)
                     df_resultados = preparar_df(df_resultados, cols_res)
@@ -440,6 +447,7 @@ if st.session_state['logeado_dist']:
                     "Area_Mas_Debil": area_debil,
                     "Area_Mas_Fuerte": area_fuerte,
                     "Preguntas_Falladas": preg_falladas_str,
+                    "Tiempo_Total": tiempo_texto,
                     "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }])
                 
