@@ -1370,7 +1370,8 @@ elif division == MENU_CAPA:
         with tab_usrs:
             st.subheader("Contraseñas y Accesos")
             try:
-                df_usr_ex = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0).dropna(how='all')
+                # CAMBIADO A 15 SEGUNDOS
+                df_usr_ex = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')
                 if not df_usr_ex.empty:
                     st.dataframe(df_usr_ex, use_container_width=True, hide_index=True)
                     
@@ -1544,7 +1545,8 @@ elif division == MENU_CAPA:
         with tab_conf:
             st.subheader("Parámetros Generales del Sistema")
             try:
-                df_config = conn_servicio.read(worksheet="Configuracion", ttl=0)
+                # CAMBIADO A 15 SEGUNDOS
+                df_config = conn_servicio.read(worksheet="Configuracion", ttl=15)
                 df_config = preparar_df(df_config, ["Parametro", "Valor"]).fillna("")
             except:
                 df_config = pd.DataFrame(columns=["Parametro", "Valor"])
