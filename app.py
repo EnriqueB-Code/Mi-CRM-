@@ -25,8 +25,8 @@ def inicializar_estado():
         'serie_key': 0,
         'exam_in_progress': False,
         'examen_actual': None,
-        'df_examen_actual': None, # NUEVO: Guarda el examen en memoria para no saturar la API
-        'tiempo_limite': 120,     # NUEVO: Guarda el tiempo en memoria
+        'df_examen_actual': None, 
+        'tiempo_limite': 120,     
         'q_index': 0,
         'respuestas_correctas': 0,
         'areas_correctas': [],
@@ -212,7 +212,6 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                 u_dist = st.text_input("Usuario Distribuidor")
                 p_dist = st.text_input("Contraseña", type="password")
                 if st.form_submit_button("Entrar a mis Exámenes"):
-                    # REPARACIÓN LIMIT RATE: Leemos la BD SOLO cuando el botón es presionado.
                     try:
                         df_usr_exam = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0)
                         df_usr_exam = preparar_df(df_usr_exam, cols_usr_exam)
@@ -244,7 +243,6 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                 empresa_dist = st.text_input("Empresa / Distribuidor al que perteneces")
                 
                 if st.form_submit_button("Registrarme"):
-                    # REPARACIÓN LIMIT RATE: Solo leemos BD si oprimen el botón
                     try:
                         df_usr_exam = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0)
                         df_usr_exam = preparar_df(df_usr_exam, cols_usr_exam)
@@ -286,7 +284,6 @@ if st.session_state['logeado_dist']:
     st.markdown("---")
 
     if not st.session_state['exam_in_progress']:
-        # SOLO CONSULTAMOS A GOOGLE SHEETS ANTES DE INICIAR EL EXAMEN
         try:
             df_config_ex = conn_servicio.read(worksheet="Configuracion", ttl=60).dropna(how='all')
             if not df_config_ex.empty and "Tiempo_Pregunta_Segundos" in df_config_ex['Parametro'].values:
@@ -318,9 +315,7 @@ if st.session_state['logeado_dist']:
         bloqueado = False
         if st.session_state['usuario'].lower() != "admin_pruebas":
             try:
-                # ttl=15 ayuda a no agotar peticiones de golpe
                 df_res_val = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
-                
                 if not df_res_val.empty and 'Calificacion' in df_res_val.columns and 'Fecha' in df_res_val.columns:
                     historial = df_res_val[(df_res_val['Usuario'] == st.session_state['usuario']) & (df_res_val['Examen'] == examen_sel)].copy()
 
@@ -360,14 +355,11 @@ if st.session_state['logeado_dist']:
                 st.session_state['q_start_time'] = datetime.now()
                 st.session_state['examen_guardado'] = False 
                 
-                # REPARACIÓN LIMIT RATE: Guardamos el examen en la memoria del navegador.
                 st.session_state['df_examen_actual'] = df_banco[df_banco['Examen'] == examen_sel].reset_index(drop=True)
                 st.session_state['tiempo_limite'] = TIEMPO_LIMITE_BD
-                
                 st.rerun()
 
     else:
-        # EXAMEN EN CURSO: AQUÍ ESTÁ TOTALMENTE PROHIBIDO LLAMAR A conn_servicio.read()
         df_examen_actual = st.session_state['df_examen_actual']
         TIEMPO_LIMITE = st.session_state['tiempo_limite']
         total_preguntas = len(df_examen_actual)
@@ -417,7 +409,6 @@ if st.session_state['logeado_dist']:
                 st.rerun()
                 
         else:
-            # FIN DEL EXAMEN: Volvemos a conectar con Google Sheets solo para guardar.
             calificacion_base10 = round((st.session_state['respuestas_correctas'] / total_preguntas) * 10, 1)
             
             if calificacion_base10 >= 7.0:
@@ -462,7 +453,7 @@ if st.session_state['logeado_dist']:
                 st.session_state['examen_guardado'] = False 
                 st.rerun()
 
-    st.stop() # Evita que los distribuidores vean el resto del CRM
+    st.stop()
 
 
 # ==========================================
@@ -496,7 +487,8 @@ elif area_actual == 'Servicio':
 elif area_actual == 'Aplicaciones':
     opciones_menu = [MENU_DASH, MENU_MKT, MENU_EVE, MENU_DEMO, MENU_CAPA]
 elif area_actual == 'Invitado':
-    opciones_menu = [MENU_DASH, MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO]
+    # Invitado ya NO ve MENU_SERV. Solo los especificados.
+    opciones_menu = [MENU_DASH, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO, MENU_CAPA]
 else:
     opciones_menu = [MENU_DASH]
 
@@ -1158,7 +1150,7 @@ elif division == MENU_INV:
                 with st.form("form_danada", clear_on_submit=True):
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        pn_d = st.text_input("PN (Número de Parte)")
+                        pn_d = text_input("PN (Número de Parte)")
                         sn_d = st.text_input("SN (Número de Serie)")
                         desc_d = st.text_area("Description")
                     with c2:
@@ -1361,8 +1353,8 @@ elif division == MENU_CAPA:
     st.header("🎓 Administración de Capacitación (LMS)")
     
     # --- RENDERIZADO DINÁMICO DE PESTAÑAS SEGÚN EL ÁREA ---
-    if st.session_state.get('area') == 'Aplicaciones':
-        # Aplicaciones solo ve Resultados y Análisis
+    if st.session_state.get('area') in ['Aplicaciones', 'Invitado']:
+        # Aplicaciones e Invitados solo ven Resultados y Análisis
         tabs = st.tabs(["📈 Resultados y Análisis"])
         tab_res = tabs[0]
         tab_usrs = None
@@ -1463,53 +1455,72 @@ elif division == MENU_CAPA:
                     st.metric("ID Pregunta Más Fallada", str(pregunta_peor))
                     
                 st.markdown("---")
+                st.write("### 📄 Generador de Reportes PDF (Filtro Avanzado)")
                 if HAS_FPDF:
                     try: 
-                        lista_distribuidores = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')['Distribuidor'].unique()
+                        df_usr_temp = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')
+                        lista_distribuidores = df_usr_temp['Distribuidor'].unique().tolist()
                     except:
-                        lista_distribuidores = ["N/A"]
+                        df_usr_temp = pd.DataFrame()
+                        lista_distribuidores = []
 
-                    distribuidor_selec = st.selectbox("Generar Reporte PDF para el Distribuidor:", lista_distribuidores)
-                    if st.button("📄 Descargar PDF de Desempeño"):
-                        if distribuidor_selec != "N/A":
-                            pdf = FPDF()
-                            pdf.add_page()
-                            pdf.set_font("Arial", 'B', 16)
-                            pdf.cell(200, 10, txt="Reporte de Capacitacion de Distribuidores", ln=True, align='C')
+                    if lista_distribuidores:
+                        # 1. Primer Filtro: Distribuidor
+                        distribuidor_selec = st.selectbox("1. Selecciona el Distribuidor/Empresa:", ["(Selecciona un Distribuidor)"] + lista_distribuidores)
+                        
+                        if distribuidor_selec != "(Selecciona un Distribuidor)":
+                            # Extraemos los usuarios exactos para ese distribuidor
+                            usuarios_del_dist = df_usr_temp[df_usr_temp['Distribuidor'] == distribuidor_selec]['Usuario'].unique().tolist()
                             
-                            pdf.set_font("Arial", '', 12)
-                            pdf.ln(10)
-                            pdf.cell(200, 10, txt=f"Empresa/Distribuidor: {distribuidor_selec}", ln=True)
-                            pdf.cell(200, 10, txt=f"Fecha de Reporte: {hoy}", ln=True)
-                            pdf.ln(10)
-                            
-                            pdf.set_font("Arial", 'B', 12)
-                            pdf.cell(200, 10, txt="Resultados de Evaluaciones:", ln=True)
-                            
-                            pdf.set_font("Arial", '', 10)
-                            try:
-                                df_usr_temp = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')
-                                usuarios_dist = df_usr_temp[df_usr_temp['Distribuidor'] == distribuidor_selec]['Usuario'].tolist()
-                                resultados_filtro = df_res_ex[df_res_ex['Usuario'].isin(usuarios_dist)]
-                            except:
-                                resultados_filtro = pd.DataFrame()
-                            
-                            if not resultados_filtro.empty:
-                                for _, row in resultados_filtro.iterrows():
-                                    texto = f"-> {row['Usuario']} | Examen: {row['Examen']} | Calif: {row['Calificacion']}/10 | Falla en: {row['Area_Mas_Debil']}"
-                                    pdf.cell(200, 8, txt=texto, ln=True)
-                            else:
-                                pdf.cell(200, 8, txt="No hay examenes registrados para este distribuidor.", ln=True)
-                                
-                            pdf_output = pdf.output(dest="S").encode("latin-1")
-                            
-                            st.download_button(
-                                label="📥 Clic para Guardar PDF",
-                                data=pdf_output,
-                                file_name=f"Reporte_{distribuidor_selec}.pdf",
-                                mime="application/pdf",
-                                type="primary"
+                            # 2. Segundo Filtro (Múltiple): Usuarios específicos
+                            st.write("2. Selecciona los usuarios a incluir:")
+                            usuarios_selec = st.multiselect(
+                                "Deja todos marcados para un reporte completo, o quita nombres para un reporte específico.",
+                                options=usuarios_del_dist, 
+                                default=usuarios_del_dist
                             )
+                            
+                            if st.button("📄 Descargar PDF de Desempeño"):
+                                if not usuarios_selec:
+                                    st.warning("⚠️ Debes seleccionar al menos un usuario para generar el reporte.")
+                                else:
+                                    pdf = FPDF()
+                                    pdf.add_page()
+                                    pdf.set_font("Arial", 'B', 16)
+                                    pdf.cell(200, 10, txt="Reporte de Capacitacion de Distribuidores", ln=True, align='C')
+                                    
+                                    pdf.set_font("Arial", '', 12)
+                                    pdf.ln(10)
+                                    pdf.cell(200, 10, txt=f"Empresa/Distribuidor: {distribuidor_selec}", ln=True)
+                                    pdf.cell(200, 10, txt=f"Fecha de Reporte: {hoy}", ln=True)
+                                    pdf.ln(10)
+                                    
+                                    pdf.set_font("Arial", 'B', 12)
+                                    pdf.cell(200, 10, txt="Resultados de Evaluaciones (Usuarios Seleccionados):", ln=True)
+                                    
+                                    pdf.set_font("Arial", '', 10)
+                                    
+                                    # Filtramos cruzando los usuarios elegidos
+                                    resultados_filtro = df_res_ex[df_res_ex['Usuario'].isin(usuarios_selec)]
+                                    
+                                    if not resultados_filtro.empty:
+                                        for _, row in resultados_filtro.iterrows():
+                                            texto = f"-> {row['Usuario']} | Examen: {row['Examen']} | Calif: {row['Calificacion']}/10 | Falla en: {row['Area_Mas_Debil']}"
+                                            pdf.cell(200, 8, txt=texto, ln=True)
+                                    else:
+                                        pdf.cell(200, 8, txt="No hay examenes registrados para los usuarios seleccionados.", ln=True)
+                                        
+                                    pdf_output = pdf.output(dest="S").encode("latin-1")
+                                    
+                                    st.download_button(
+                                        label="📥 Clic para Guardar PDF",
+                                        data=pdf_output,
+                                        file_name=f"Reporte_{distribuidor_selec}_{hoy}.pdf",
+                                        mime="application/pdf",
+                                        type="primary"
+                                    )
+                    else:
+                        st.info("No hay distribuidores registrados para generar reportes.")
                 else:
                     st.warning("⚠️ **Librería FPDF no detectada.** Para habilitar los reportes PDF en el sistema, dile a tu programador que ejecute `pip install fpdf` en el entorno o lo agregue al archivo `requirements.txt`.")
             else:
