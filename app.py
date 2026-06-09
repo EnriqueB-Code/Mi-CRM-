@@ -185,10 +185,10 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                         elif 'Rol' in valido.columns:
                             rol_antiguo = str(valido.iloc[0]['Rol']).strip()
                             if rol_antiguo == "Admin": area_asignada = "Admin"
-                            elif rol_antiguo == "Solo Lectura": area_asignada = "Invitado"
+                            elif rol_antiguo == "Solo Lectura": area_asignada = "Invitados"
                             else: area_asignada = "Servicio" 
                         else:
-                            area_asignada = "Invitado"
+                            area_asignada = "Invitados"
                             
                         st.session_state['area'] = area_asignada
                         
@@ -486,9 +486,9 @@ elif area_actual == 'Servicio':
     opciones_menu = [MENU_DASH, MENU_SERV, MENU_EVE, MENU_INV, MENU_DEMO]
 elif area_actual == 'Aplicaciones':
     opciones_menu = [MENU_DASH, MENU_MKT, MENU_EVE, MENU_DEMO, MENU_CAPA]
-elif area_actual == 'Invitado':
-    # Invitado ya NO ve MENU_SERV. Solo los especificados.
-    opciones_menu = [MENU_DASH, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO, MENU_CAPA]
+elif area_actual in ['Invitado', 'Invitados']:
+    # Ahora sí detectará si en la base dice Invitado o Invitados y mostrará exactamente esto:
+    opciones_menu = [MENU_DASH, MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO, MENU_CAPA]
 else:
     opciones_menu = [MENU_DASH]
 
@@ -631,10 +631,10 @@ elif division == MENU_SERV:
                         df_servicio.at[index, 'Estatus'] = 'Activo'
                         hubo_cambios = True
                 except ValueError: pass
-        if hubo_cambios and st.session_state.get('area') != 'Invitado': 
+        if hubo_cambios and st.session_state.get('area') not in ['Invitado', 'Invitados']: 
             conn_servicio.update(data=df_servicio)
 
-    if st.session_state.get('area') != 'Invitado':
+    if st.session_state.get('area') not in ['Invitado', 'Invitados']:
         tab_reg, tab_edit = st.tabs(["➕ Registrar / Actualizar", "✏️ Editar Caso"])
         
         with tab_reg:
@@ -730,7 +730,7 @@ elif division == MENU_SERV:
     if not df_servicio.empty:
         st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
-        if st.session_state.get('area') != 'Invitado':
+        if st.session_state.get('area') not in ['Invitado', 'Invitados']:
             st.write("### ⚙️ Gestionar Casos")
             col_sel, col_up, col_down, col_pend, col_fin, col_del = st.columns([2, 1, 1, 1.5, 1.5, 1])
             with col_sel:
@@ -813,10 +813,10 @@ elif division == MENU_MKT:
                         elif dias_lic_restantes < 0: st.error(f"🚫 **LICENCIA CADUCADA:** Contraseña de '{row['Equipo']}' de '{row['KOL']}' venció hace {abs(dias_lic_restantes)} días.")
                     except ValueError: pass
                     
-        if hubo_cambios_mkt and st.session_state.get('area') != 'Invitado': 
+        if hubo_cambios_mkt and st.session_state.get('area') not in ['Invitado', 'Invitados']: 
             conn_marketing.update(data=df_marketing)
 
-    if st.session_state.get('area') != 'Invitado':
+    if st.session_state.get('area') not in ['Invitado', 'Invitados']:
         tab_reg_m, tab_edit_m = st.tabs(["➕ Registrar Préstamo", "✏️ Editar Préstamo"])
 
         with tab_reg_m:
@@ -892,7 +892,7 @@ elif division == MENU_MKT:
         columnas_visibles = [c for c in df_marketing.columns if c != "Vencimiento Licencia"]
         st.dataframe(df_marketing[columnas_visibles].style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
-        if st.session_state.get('area') != 'Invitado':
+        if st.session_state.get('area') not in ['Invitado', 'Invitados']:
             st.write("### ⚙️ Gestionar Préstamos y Licencias")
             
             col_sel_m, col_up_m, col_down_m, col_ren_lic, col_ren_dev, col_fin_m, col_del_m = st.columns([1.5, 0.5, 0.5, 1.5, 1.5, 1, 1])
@@ -971,7 +971,7 @@ elif division == MENU_EVE:
     except:
         df_eventos = pd.DataFrame(columns=cols_eve)
         
-    if st.session_state.get('area') != 'Invitado':
+    if st.session_state.get('area') not in ['Invitado', 'Invitados']:
         tab_reg_e, tab_edit_e = st.tabs(["➕ Registrar Evento", "✏️ Editar Evento"])
         
         with tab_reg_e:
@@ -1015,7 +1015,7 @@ elif division == MENU_EVE:
     if not df_eventos.empty:
         st.dataframe(df_eventos, use_container_width=True, hide_index=True)
         
-        if st.session_state.get('area') != 'Invitado':
+        if st.session_state.get('area') not in ['Invitado', 'Invitados']:
             st.write("### ⚙️ Gestionar Eventos")
             col_sel, col_up, col_dw, col_del = st.columns([2, 1, 1, 2])
             with col_sel:
@@ -1055,7 +1055,7 @@ elif division == MENU_INV:
         except:
             df_nuevas = pd.DataFrame(columns=cols_nuevas)
             
-        if st.session_state.get('area') != 'Invitado':
+        if st.session_state.get('area') not in ['Invitado', 'Invitados']:
             with st.expander("➕ Registrar Pieza Nueva"):
                 with st.form("form_nva_pieza", clear_on_submit=True):
                     c1, c2, c3 = st.columns(3)
@@ -1085,7 +1085,7 @@ elif division == MENU_INV:
         if not df_nuevas.empty:
             st.dataframe(df_nuevas, use_container_width=True, hide_index=True)
             
-            if st.session_state.get('area') != 'Invitado':
+            if st.session_state.get('area') not in ['Invitado', 'Invitados']:
                 st.write("### ⚙️ Gestionar Piezas Nuevas")
                 with st.expander("✏️ Editar Pieza Nueva"):
                     id_ed_n = st.selectbox("Selecciona ID a editar:", df_nuevas['ID'].unique(), key="edit_sel_n")
@@ -1145,12 +1145,12 @@ elif division == MENU_INV:
         except:
             df_danadas = pd.DataFrame(columns=cols_danadas)
             
-        if st.session_state.get('area') != 'Invitado':
+        if st.session_state.get('area') not in ['Invitado', 'Invitados']:
             with st.expander("➕ Registrar Pieza Dañada"):
                 with st.form("form_danada", clear_on_submit=True):
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        pn_d = text_input("PN (Número de Parte)")
+                        pn_d = st.text_input("PN (Número de Parte)")
                         sn_d = st.text_input("SN (Número de Serie)")
                         desc_d = st.text_area("Description")
                     with c2:
@@ -1178,7 +1178,7 @@ elif division == MENU_INV:
         if not df_danadas.empty:
             st.dataframe(df_danadas, use_container_width=True, hide_index=True)
             
-            if st.session_state.get('area') != 'Invitado':
+            if st.session_state.get('area') not in ['Invitado', 'Invitados']:
                 st.write("### ⚙️ Gestionar Piezas Dañadas")
                 with st.expander("✏️ Editar Pieza Dañada"):
                     id_ed_d = st.selectbox("Selecciona ID a editar:", df_danadas['ID'].unique(), key="edit_sel_d")
@@ -1273,7 +1273,7 @@ elif division == MENU_DEMO:
             st.warning("Estos equipos no aparecen arriba porque actualmente están asignados a un KOL en Marketing.")
             st.dataframe(df_demo_prestados, use_container_width=True, hide_index=True)
 
-    if st.session_state.get('area') != 'Invitado':
+    if st.session_state.get('area') not in ['Invitado', 'Invitados']:
         st.write("---")
         st.write("### ⚙️ Administración de Catálogo de Equipos Demo")
         tab_alta_d, tab_edit_d = st.tabs(["➕ Registrar Equipo Demo", "✏️ Editar / Eliminar Equipo"])
@@ -1353,7 +1353,7 @@ elif division == MENU_CAPA:
     st.header("🎓 Administración de Capacitación (LMS)")
     
     # --- RENDERIZADO DINÁMICO DE PESTAÑAS SEGÚN EL ÁREA ---
-    if st.session_state.get('area') in ['Aplicaciones', 'Invitado']:
+    if st.session_state.get('area') in ['Aplicaciones', 'Invitado', 'Invitados']:
         # Aplicaciones e Invitados solo ven Resultados y Análisis
         tabs = st.tabs(["📈 Resultados y Análisis"])
         tab_res = tabs[0]
@@ -1582,7 +1582,7 @@ elif division == MENU_USR:
         with st.form("nuevo_usuario", clear_on_submit=True):
             nuevo_user = st.text_input("Nombre de Usuario")
             nuevo_pass = st.text_input("Contraseña")
-            nuevo_area = st.selectbox("Área de Acceso", ["Admin", "Servicio", "Aplicaciones", "Invitado"])
+            nuevo_area = st.selectbox("Área de Acceso", ["Admin", "Servicio", "Aplicaciones", "Invitados"])
             
             if st.form_submit_button("Crear Usuario"):
                 if nuevo_user and nuevo_pass:
