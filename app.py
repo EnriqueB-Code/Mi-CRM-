@@ -1420,7 +1420,8 @@ elif division == MENU_CAPA:
     with tab_res:
         st.subheader("Desempeño Global")
         try:
-            df_res_ex = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0).dropna(how='all')
+            # CAMBIO CLAVE: ttl=15 en vez de ttl=0 para evitar saturar la API al usar filtros rápidos
+            df_res_ex = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
             if not df_res_ex.empty:
                 st.dataframe(df_res_ex, use_container_width=True, hide_index=True)
                 
@@ -1458,6 +1459,7 @@ elif division == MENU_CAPA:
                 st.write("### 📄 Generador de Reportes PDF (Filtro Avanzado)")
                 if HAS_FPDF:
                     try: 
+                        # También aplicamos caché de 15s a esta consulta para proteger los filtros
                         df_usr_temp = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')
                         lista_distribuidores = df_usr_temp['Distribuidor'].unique().tolist()
                     except:
@@ -1465,13 +1467,11 @@ elif division == MENU_CAPA:
                         lista_distribuidores = []
 
                     if lista_distribuidores:
-                        # 1. Primer Filtro: Distribuidor
                         distribuidor_selec = st.selectbox("1. Selecciona el Distribuidor/Empresa:", ["(Selecciona un Distribuidor)"] + lista_distribuidores)
                         
                         if distribuidor_selec != "(Selecciona un Distribuidor)":
                             usuarios_del_dist = df_usr_temp[df_usr_temp['Distribuidor'] == distribuidor_selec]['Usuario'].unique().tolist()
                             
-                            # 2. Segundo Filtro (Múltiple): Usuarios específicos
                             st.write("2. Selecciona los usuarios a incluir:")
                             usuarios_selec = st.multiselect(
                                 "Deja todos marcados para un reporte completo, o quita nombres para un reporte específico.",
@@ -1480,10 +1480,8 @@ elif division == MENU_CAPA:
                             )
                             
                             if not usuarios_selec:
-                                # Aquí muestra una advertencia amistosa si quitan a TODOS los usuarios del filtro
                                 st.warning("⚠️ Debes seleccionar al menos un usuario para generar el reporte.")
                             else:
-                                # GENERACIÓN DEL PDF DIRECTA (Corrigiendo el bug de Streamlit y caracteres especiales)
                                 try:
                                     pdf = FPDF()
                                     pdf.add_page()
@@ -1493,7 +1491,6 @@ elif division == MENU_CAPA:
                                     pdf.set_font("Arial", '', 12)
                                     pdf.ln(10)
                                     
-                                    # Filtro de seguridad para evitar que FPDF falle si un nombre tiene emojis o símbolos raros
                                     def limpiar_texto(texto):
                                         return str(texto).encode('latin-1', 'replace').decode('latin-1')
 
@@ -1506,7 +1503,6 @@ elif division == MENU_CAPA:
                                     
                                     pdf.set_font("Arial", '', 10)
                                     
-                                    # Filtramos cruzando los usuarios elegidos
                                     resultados_filtro = df_res_ex[df_res_ex['Usuario'].isin(usuarios_selec)]
                                     
                                     if not resultados_filtro.empty:
@@ -1522,7 +1518,6 @@ elif division == MENU_CAPA:
                                         
                                     pdf_output = pdf.output(dest="S").encode("latin-1")
                                     
-                                    # Se muestra el botón de descarga directamente (Evita el crasheo al filtrar)
                                     st.download_button(
                                         label="📄 Descargar PDF de Desempeño",
                                         data=pdf_output,
@@ -1538,8 +1533,12 @@ elif division == MENU_CAPA:
                     st.warning("⚠️ **Librería FPDF no detectada.** Para habilitar los reportes PDF dile a tu programador que instale fpdf.")
             else:
                 st.info("Aún no hay resultados de exámenes registrados.")
-        except:
-            st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
+        except Exception as e:
+            # Captura de errores más inteligente para no ocultar la saturación de la API
+            if "WorksheetNotFound" in str(e):
+                st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
+            else:
+                st.error(f"⚠️ Servidor saturado por consultas rápidas. Espera 1 minuto y recarga la página. Detalle técnico: {e}")
             
     if tab_conf is not None:
         with tab_conf:
