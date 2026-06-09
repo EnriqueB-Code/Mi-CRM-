@@ -1455,7 +1455,7 @@ elif division == MENU_CAPA:
                     st.metric("ID Pregunta Más Fallada", str(pregunta_peor))
                     
                 st.markdown("---")
-st.write("### 📄 Generador de Reportes PDF (Filtro Avanzado)")
+                st.write("### 📄 Generador de Reportes PDF (Filtro Avanzado)")
                 if HAS_FPDF:
                     try: 
                         df_usr_temp = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')
@@ -1535,8 +1535,7 @@ st.write("### 📄 Generador de Reportes PDF (Filtro Avanzado)")
                     else:
                         st.info("No hay distribuidores registrados para generar reportes.")
                 else:
-                    st.warning("⚠️ **Librería FPDF no detectada.** Para habilitar los reportes PDF dile a tu programador que instale fpdf.")
-                            else:
+                    st.warning("⚠️ **Librería FPDF no detectada.** Para habilitar los reportes PDF dile a tu programador que instale fpdf.")            else:
                 st.info("Aún no hay resultados de exámenes registrados.")
         except:
             st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
