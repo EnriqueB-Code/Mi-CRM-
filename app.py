@@ -1469,7 +1469,6 @@ elif division == MENU_CAPA:
                         distribuidor_selec = st.selectbox("1. Selecciona el Distribuidor/Empresa:", ["(Selecciona un Distribuidor)"] + lista_distribuidores)
                         
                         if distribuidor_selec != "(Selecciona un Distribuidor)":
-                            # Extraemos los usuarios exactos para ese distribuidor
                             usuarios_del_dist = df_usr_temp[df_usr_temp['Distribuidor'] == distribuidor_selec]['Usuario'].unique().tolist()
                             
                             # 2. Segundo Filtro (Múltiple): Usuarios específicos
@@ -1480,10 +1479,12 @@ elif division == MENU_CAPA:
                                 default=usuarios_del_dist
                             )
                             
-                            if st.button("📄 Descargar PDF de Desempeño"):
-                                if not usuarios_selec:
-                                    st.warning("⚠️ Debes seleccionar al menos un usuario para generar el reporte.")
-                                else:
+                            if not usuarios_selec:
+                                # Aquí muestra una advertencia amistosa si quitan a TODOS los usuarios del filtro
+                                st.warning("⚠️ Debes seleccionar al menos un usuario para generar el reporte.")
+                            else:
+                                # GENERACIÓN DEL PDF DIRECTA (Corrigiendo el bug de Streamlit y caracteres especiales)
+                                try:
                                     pdf = FPDF()
                                     pdf.add_page()
                                     pdf.set_font("Arial", 'B', 16)
@@ -1491,7 +1492,12 @@ elif division == MENU_CAPA:
                                     
                                     pdf.set_font("Arial", '', 12)
                                     pdf.ln(10)
-                                    pdf.cell(200, 10, txt=f"Empresa/Distribuidor: {distribuidor_selec}", ln=True)
+                                    
+                                    # Filtro de seguridad para evitar que FPDF falle si un nombre tiene emojis o símbolos raros
+                                    def limpiar_texto(texto):
+                                        return str(texto).encode('latin-1', 'replace').decode('latin-1')
+
+                                    pdf.cell(200, 10, txt=f"Empresa/Distribuidor: {limpiar_texto(distribuidor_selec)}", ln=True)
                                     pdf.cell(200, 10, txt=f"Fecha de Reporte: {hoy}", ln=True)
                                     pdf.ln(10)
                                     
@@ -1505,24 +1511,31 @@ elif division == MENU_CAPA:
                                     
                                     if not resultados_filtro.empty:
                                         for _, row in resultados_filtro.iterrows():
-                                            texto = f"-> {row['Usuario']} | Examen: {row['Examen']} | Calif: {row['Calificacion']}/10 | Falla en: {row['Area_Mas_Debil']}"
+                                            usr_limpio = limpiar_texto(row['Usuario'])
+                                            ex_limpio = limpiar_texto(row['Examen'])
+                                            area_limpia = limpiar_texto(row['Area_Mas_Debil'])
+                                            
+                                            texto = f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {row['Calificacion']}/10 | Falla en: {area_limpia}"
                                             pdf.cell(200, 8, txt=texto, ln=True)
                                     else:
                                         pdf.cell(200, 8, txt="No hay examenes registrados para los usuarios seleccionados.", ln=True)
                                         
                                     pdf_output = pdf.output(dest="S").encode("latin-1")
                                     
+                                    # Se muestra el botón de descarga directamente (Evita el crasheo al filtrar)
                                     st.download_button(
-                                        label="📥 Clic para Guardar PDF",
+                                        label="📄 Descargar PDF de Desempeño",
                                         data=pdf_output,
-                                        file_name=f"Reporte_{distribuidor_selec}_{hoy}.pdf",
+                                        file_name=f"Reporte_{limpiar_texto(distribuidor_selec)}_{hoy}.pdf",
                                         mime="application/pdf",
                                         type="primary"
                                     )
+                                except Exception as e:
+                                    st.error(f"Error interno al generar el PDF: {e}")
                     else:
                         st.info("No hay distribuidores registrados para generar reportes.")
                 else:
-                    st.warning("⚠️ **Librería FPDF no detectada.** Para habilitar los reportes PDF en el sistema, dile a tu programador que ejecute `pip install fpdf` en el entorno o lo agregue al archivo `requirements.txt`.")
+                    st.warning("⚠️ **Librería FPDF no detectada.** Para habilitar los reportes PDF dile a tu programador que instale fpdf.")
             else:
                 st.info("Aún no hay resultados de exámenes registrados.")
         except:
