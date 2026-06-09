@@ -33,7 +33,7 @@ def inicializar_estado():
         'areas_falladas': [],
         'preguntas_falladas': [],
         'q_start_time': None,
-        'exam_start_time': None,  # Cronómetro total
+        'exam_start_time': None,  # Guarda el inicio global del examen
         'examen_guardado': False
     }
     for key, value in defaults.items():
@@ -348,7 +348,7 @@ if st.session_state['logeado_dist']:
             if st.button("🚀 Comenzar Examen", type="primary"):
                 st.session_state['exam_in_progress'] = True
                 st.session_state['examen_actual'] = examen_sel
-                st.session_state['exam_start_time'] = datetime.now()
+                st.session_state['exam_start_time'] = datetime.now()  # Cronómetro total activo
                 st.session_state['q_index'] = 0
                 st.session_state['respuestas_correctas'] = 0
                 st.session_state['areas_correctas'] = []
@@ -425,6 +425,7 @@ if st.session_state['logeado_dist']:
             st.metric(label="Tu Calificación Final", value=f"{calificacion_base10} / 10")
             
             if not st.session_state.get('examen_guardado', False):
+                # Cálculo de la duración total del examen
                 tiempo_total_segundos = (datetime.now() - st.session_state['exam_start_time']).total_seconds()
                 minutos = int(tiempo_total_segundos // 60)
                 segundos = int(tiempo_total_segundos % 60)
@@ -447,7 +448,7 @@ if st.session_state['logeado_dist']:
                     "Area_Mas_Debil": area_debil,
                     "Area_Mas_Fuerte": area_fuerte,
                     "Preguntas_Falladas": preg_falladas_str,
-                    "Tiempo_Total": tiempo_texto,
+                    "Tiempo_Total": tiempo_texto,  # Guardamos la duración calculada
                     "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }])
                 
@@ -495,7 +496,6 @@ elif area_actual == 'Servicio':
 elif area_actual == 'Aplicaciones':
     opciones_menu = [MENU_DASH, MENU_MKT, MENU_EVE, MENU_DEMO, MENU_CAPA]
 elif area_actual in ['Invitado', 'Invitados']:
-    # Ahora sí detectará si en la base dice Invitado o Invitados y mostrará exactamente esto:
     opciones_menu = [MENU_DASH, MENU_SERV, MENU_MKT, MENU_EVE, MENU_INV, MENU_DEMO, MENU_CAPA]
 else:
     opciones_menu = [MENU_DASH]
@@ -505,7 +505,7 @@ st.title("Panel de Control Sincronizado")
 
 
 # ==========================================
-# DIVISIÓN: DASHBOARD GENERAL (FASE A)
+# DIVISIÓN: DASHBOARD GENERAL
 # ==========================================
 if division == MENU_DASH:
     col_titulo, col_boton = st.columns([3, 1])
@@ -967,16 +967,25 @@ elif division == MENU_MKT:
 
 
 # ==========================================
-# DIVISIÓN: EVENTOS
+# DIVISIÓN: CALENDARIO DE EVENTOS
 # ==========================================
 elif division == MENU_EVE:
     st.header("📅 Calendario de Eventos")
     cols_eve = ["ID", "Nombre del evento", "Distribuidor", "Fecha de inicio", "Fecha de termino", "Creado por"]
     
     try:
-        df_eventos = conn_marketing.read(worksheet="Eventos", ttl=0)
+        # Cambio Clave: caché de 15 segundos para proteger de cuotas de saturación rápidas
+        df_eventos = conn_marketing.read(worksheet="Eventos", ttl=15)
         df_eventos = preparar_df(df_eventos, cols_eve).fillna("")
-    except:
+    except Exception as e:
+        error_str = str(e)
+        if "WorksheetNotFound" in error_str:
+            st.error("⚠️ Google Sheets dice que la pestaña no existe. Ve a tu Excel, haz doble clic en el nombre de la pestaña 'Eventos' y asegúrate de que no tenga un espacio en blanco al final o al inicio.")
+        elif "429" in error_str or "Quota" in error_str:
+            st.error("⚠️ Servidor de Google saturado por consultas continuas. Espera 1 minuto y recarga la página.")
+        else:
+            st.error(f"⚠️ Error técnico de conexión: {error_str}")
+            
         df_eventos = pd.DataFrame(columns=cols_eve)
         
     if st.session_state.get('area') not in ['Invitado', 'Invitados']:
@@ -1351,7 +1360,7 @@ elif division == MENU_DEMO:
                             eliminar_registro_gsheets(conn_marketing, df_demo, id_ed_demo, "Equipos_Demo")
                             st.success("Equipo eliminado del inventario maestro."); st.rerun()
             else:
-                st.info("No hay equipos registrados en la base de datos.")
+                st.info("No hay equipos registrados in la base de datos.")
 
 
 # ==========================================
@@ -1362,13 +1371,11 @@ elif division == MENU_CAPA:
     
     # --- RENDERIZADO DINÁMICO DE PESTAÑAS SEGÚN EL ÁREA ---
     if st.session_state.get('area') in ['Aplicaciones', 'Invitado', 'Invitados']:
-        # Aplicaciones e Invitados solo ven Resultados y Análisis
         tabs = st.tabs(["📈 Resultados y Análisis"])
         tab_res = tabs[0]
         tab_usrs = None
         tab_conf = None
     else:
-        # Admin ve todo
         tabs = st.tabs(["👥 Usuarios de Distribuidores", "📈 Resultados y Análisis", "⚙️ Configuración"])
         tab_usrs = tabs[0]
         tab_res = tabs[1]
@@ -1378,7 +1385,7 @@ elif division == MENU_CAPA:
         with tab_usrs:
             st.subheader("Contraseñas y Accesos")
             try:
-                # CAMBIADO A 15 SEGUNDOS
+                # Caché temporal aplicada para proteger las recargas del filtro avanzadas
                 df_usr_ex = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')
                 if not df_usr_ex.empty:
                     st.dataframe(df_usr_ex, use_container_width=True, hide_index=True)
@@ -1429,7 +1436,7 @@ elif division == MENU_CAPA:
     with tab_res:
         st.subheader("Desempeño Global")
         try:
-            # CAMBIO CLAVE: ttl=15 en vez de ttl=0 para evitar saturar la API al usar filtros rápidos
+            # Escudo clave antibloqueo en la pestaña de resultados generales
             df_res_ex = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
             if not df_res_ex.empty:
                 st.dataframe(df_res_ex, use_container_width=True, hide_index=True)
@@ -1468,7 +1475,6 @@ elif division == MENU_CAPA:
                 st.write("### 📄 Generador de Reportes PDF (Filtro Avanzado)")
                 if HAS_FPDF:
                     try: 
-                        # También aplicamos caché de 15s a esta consulta para proteger los filtros
                         df_usr_temp = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')
                         lista_distribuidores = df_usr_temp['Distribuidor'].unique().tolist()
                     except:
@@ -1519,8 +1525,10 @@ elif division == MENU_CAPA:
                                             usr_limpio = limpiar_texto(row['Usuario'])
                                             ex_limpio = limpiar_texto(row['Examen'])
                                             area_limpia = limpiar_texto(row['Area_Mas_Debil'])
+                                            # Incluimos la visualización del Tiempo Total si está guardada en la fila
+                                            tiempo_fila = row['Tiempo_Total'] if 'Tiempo_Total' in row and pd.notna(row['Tiempo_Total']) else "N/A"
                                             
-                                            texto = f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {row['Calificacion']}/10 | Falla en: {area_limpia}"
+                                            texto = f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {row['Calificacion']}/10 | Duracion: {tiempo_fila} | Falla en: {area_limpia}"
                                             pdf.cell(200, 8, txt=texto, ln=True)
                                     else:
                                         pdf.cell(200, 8, txt="No hay examenes registrados para los usuarios seleccionados.", ln=True)
@@ -1539,11 +1547,10 @@ elif division == MENU_CAPA:
                     else:
                         st.info("No hay distribuidores registrados para generar reportes.")
                 else:
-                    st.warning("⚠️ **Librería FPDF no detectada.** Para habilitar los reportes PDF dile a tu programador que instale fpdf.")
+                    st.warning("⚠️ **Librería FPDF no detectada.** Para habilitar los reportes PDF instala la dependencia fpdf.")
             else:
                 st.info("Aún no hay resultados de exámenes registrados.")
         except Exception as e:
-            # Captura de errores más inteligente para no ocultar la saturación de la API
             if "WorksheetNotFound" in str(e):
                 st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
             else:
@@ -1553,7 +1560,6 @@ elif division == MENU_CAPA:
         with tab_conf:
             st.subheader("Parámetros Generales del Sistema")
             try:
-                # CAMBIADO A 15 SEGUNDOS
                 df_config = conn_servicio.read(worksheet="Configuracion", ttl=15)
                 df_config = preparar_df(df_config, ["Parametro", "Valor"]).fillna("")
             except:
