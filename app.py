@@ -1010,8 +1010,9 @@ elif division == MENU_MKT:
 # ==========================================
 elif division == MENU_EVE:
     st.header("📅 Calendario de Eventos")
-    # --- NUEVA COLUMNA KOL AÑADIDA ---
-    cols_eve = ["ID", "Nombre del evento", "Distribuidor", "Fecha de inicio", "Fecha de termino", "KOL", "Creado por"]
+    
+    # --- COLUMNAS ACTUALIZADAS ---
+    cols_eve = ["ID", "Nombre del evento", "Tipo de evento", "Lugar del evento", "Distribuidor", "Fecha de inicio", "Fecha de termino", "KOL", "Responsable", "Creado por"]
     
     try:
         df_eventos = conn_marketing.read(worksheet="Eventos", ttl=15)
@@ -1033,9 +1034,11 @@ elif division == MENU_EVE:
         with tab_reg_e:
             with st.form("form_eventos", clear_on_submit=True):
                 ev_nombre = st.text_input("Nombre del evento")
+                ev_tipo = st.selectbox("Tipo de evento", ["Workshop", "Congress", "Otro"])
+                ev_lugar = st.text_input("Lugar del evento (Ej. Hospital, Ciudad, Hotel)")
                 ev_dist = st.text_input("Distribuidor")
-                # --- NUEVO CAMPO KOL ---
                 ev_kol = st.text_input("KOL (Opcional - Si asiste alguien especial)")
+                ev_resp = st.text_input("Responsable de asistir")
                 
                 col1, col2 = st.columns(2)
                 with col1: ev_ini = st.date_input("Fecha de inicio")
@@ -1046,10 +1049,13 @@ elif division == MENU_EVE:
                     nuevo_reg = pd.DataFrame([{
                         "ID": nuevo_id, 
                         "Nombre del evento": ev_nombre, 
+                        "Tipo de evento": ev_tipo,
+                        "Lugar del evento": str(ev_lugar).strip(),
                         "Distribuidor": ev_dist, 
                         "Fecha de inicio": str(ev_ini), 
                         "Fecha de termino": str(ev_fin), 
-                        "KOL": str(ev_kol).strip(), # --- SE GUARDA KOL ---
+                        "KOL": str(ev_kol).strip(), 
+                        "Responsable": str(ev_resp).strip(),
                         "Creado por": st.session_state['usuario']
                     }])
                     conn_marketing.update(worksheet="Eventos", data=pd.concat([df_eventos, nuevo_reg], ignore_index=True))
@@ -1062,14 +1068,27 @@ elif division == MENU_EVE:
                     idx = df_eventos.index[df_eventos['ID'] == id_ed_e].tolist()[0]
                     with st.form("form_edit_e"):
                         nomb_ed = st.text_input("Nombre", value=df_eventos.at[idx, 'Nombre del evento'])
+                        
+                        tipo_act = str(df_eventos.at[idx, 'Tipo de evento']).strip()
+                        opc_tipos = ["Workshop", "Congress", "Otro"]
+                        idx_tipo = opc_tipos.index(tipo_act) if tipo_act in opc_tipos else 2
+                        tipo_ed = st.selectbox("Tipo de evento", opc_tipos, index=idx_tipo)
+                        
+                        lugar_ed = st.text_input("Lugar del evento", value=df_eventos.at[idx, 'Lugar del evento'])
                         dist_ed = st.text_input("Distribuidor", value=df_eventos.at[idx, 'Distribuidor'])
-                        # --- SE EDITA KOL ---
                         kol_ed = st.text_input("KOL", value=df_eventos.at[idx, 'KOL'])
+                        resp_ed = st.text_input("Responsable", value=df_eventos.at[idx, 'Responsable'])
                         
                         if st.form_submit_button("Guardar Edición"):
                             cambios = []
-                            # --- SE VERIFICA KOL EN CAMBIOS ---
-                            campos_ver = [('Nombre del evento', nomb_ed), ('Distribuidor', dist_ed), ('KOL', kol_ed)]
+                            campos_ver = [
+                                ('Nombre del evento', nomb_ed), 
+                                ('Tipo de evento', tipo_ed),
+                                ('Lugar del evento', lugar_ed),
+                                ('Distribuidor', dist_ed), 
+                                ('KOL', kol_ed),
+                                ('Responsable', resp_ed)
+                            ]
                             for col, nvo_val in campos_ver:
                                 ant_val = str(df_eventos.at[idx, col])
                                 if ant_val != str(nvo_val):
