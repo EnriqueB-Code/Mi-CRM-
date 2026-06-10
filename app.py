@@ -1010,7 +1010,8 @@ elif division == MENU_MKT:
 # ==========================================
 elif division == MENU_EVE:
     st.header("📅 Calendario de Eventos")
-    cols_eve = ["ID", "Nombre del evento", "Distribuidor", "Fecha de inicio", "Fecha de termino", "Creado por"]
+    # --- NUEVA COLUMNA KOL AÑADIDA ---
+    cols_eve = ["ID", "Nombre del evento", "Distribuidor", "Fecha de inicio", "Fecha de termino", "KOL", "Creado por"]
     
     try:
         df_eventos = conn_marketing.read(worksheet="Eventos", ttl=15)
@@ -1033,13 +1034,24 @@ elif division == MENU_EVE:
             with st.form("form_eventos", clear_on_submit=True):
                 ev_nombre = st.text_input("Nombre del evento")
                 ev_dist = st.text_input("Distribuidor")
+                # --- NUEVO CAMPO KOL ---
+                ev_kol = st.text_input("KOL (Opcional - Si asiste alguien especial)")
+                
                 col1, col2 = st.columns(2)
                 with col1: ev_ini = st.date_input("Fecha de inicio")
                 with col2: ev_fin = st.date_input("Fecha de término")
                 
                 if st.form_submit_button("Guardar Evento"):
                     nuevo_id = int(df_eventos['ID'].max() + 1) if not df_eventos.empty else 1
-                    nuevo_reg = pd.DataFrame([{"ID": nuevo_id, "Nombre del evento": ev_nombre, "Distribuidor": ev_dist, "Fecha de inicio": str(ev_ini), "Fecha de termino": str(ev_fin), "Creado por": st.session_state['usuario']}])
+                    nuevo_reg = pd.DataFrame([{
+                        "ID": nuevo_id, 
+                        "Nombre del evento": ev_nombre, 
+                        "Distribuidor": ev_dist, 
+                        "Fecha de inicio": str(ev_ini), 
+                        "Fecha de termino": str(ev_fin), 
+                        "KOL": str(ev_kol).strip(), # --- SE GUARDA KOL ---
+                        "Creado por": st.session_state['usuario']
+                    }])
                     conn_marketing.update(worksheet="Eventos", data=pd.concat([df_eventos, nuevo_reg], ignore_index=True))
                     st.success("Evento registrado."); st.rerun()
                     
@@ -1051,10 +1063,13 @@ elif division == MENU_EVE:
                     with st.form("form_edit_e"):
                         nomb_ed = st.text_input("Nombre", value=df_eventos.at[idx, 'Nombre del evento'])
                         dist_ed = st.text_input("Distribuidor", value=df_eventos.at[idx, 'Distribuidor'])
+                        # --- SE EDITA KOL ---
+                        kol_ed = st.text_input("KOL", value=df_eventos.at[idx, 'KOL'])
                         
                         if st.form_submit_button("Guardar Edición"):
                             cambios = []
-                            campos_ver = [('Nombre del evento', nomb_ed), ('Distribuidor', dist_ed)]
+                            # --- SE VERIFICA KOL EN CAMBIOS ---
+                            campos_ver = [('Nombre del evento', nomb_ed), ('Distribuidor', dist_ed), ('KOL', kol_ed)]
                             for col, nvo_val in campos_ver:
                                 ant_val = str(df_eventos.at[idx, col])
                                 if ant_val != str(nvo_val):
@@ -1068,13 +1083,25 @@ elif division == MENU_EVE:
 
     st.subheader("Eventos Programados")
     if not df_eventos.empty:
-        st.dataframe(df_eventos, use_container_width=True, hide_index=True)
+        # --- BUSCADOR POR DISTRIBUIDOR ---
+        st.write("### 🔍 Filtrar Eventos")
+        distribuidores_unicos = ["Todos"] + sorted(list(set([str(d).strip() for d in df_eventos['Distribuidor'].unique() if str(d).strip() != ""])))
+        filtro_dist = st.selectbox("Selecciona el Distribuidor a consultar:", distribuidores_unicos)
+        
+        if filtro_dist != "Todos":
+            df_eventos_mostrar = df_eventos[df_eventos['Distribuidor'].str.strip() == filtro_dist]
+        else:
+            df_eventos_mostrar = df_eventos
+        
+        # Mostrar la tabla filtrada
+        st.dataframe(df_eventos_mostrar, use_container_width=True, hide_index=True)
         
         if st.session_state.get('area') not in ['Invitado', 'Invitados']:
             st.write("### ⚙️ Gestionar Eventos")
+            # Usar df_eventos_mostrar para que el ID a borrar sea el que actualmente se está viendo
             col_sel, col_up, col_dw, col_del = st.columns([2, 1, 1, 2])
             with col_sel:
-                id_gest_e = st.selectbox("Selecciona ID:", df_eventos['ID'].unique(), key="gest_eve")
+                id_gest_e = st.selectbox("Selecciona ID:", df_eventos_mostrar['ID'].unique(), key="gest_eve")
             with col_up:
                 st.write(""); st.write("")
                 if st.button("⬆️", key="up_e"):
