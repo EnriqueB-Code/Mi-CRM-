@@ -33,7 +33,7 @@ def inicializar_estado():
         'areas_falladas': [],
         'preguntas_falladas': [],
         'q_start_time': None,
-        'exam_start_time': None,  # Guarda el inicio global del examen
+        'exam_start_time': None,
         'examen_guardado': False
     }
     for key, value in defaults.items():
@@ -51,7 +51,7 @@ except Exception as e:
     st.stop()
 
 # ==========================================
-# LISTAS MAESTRAS
+# LISTAS Y COLUMNAS MAESTRAS
 # ==========================================
 LISTA_EQUIPOS = [
     "SonoEye P1", "SonoEye P2", "SonoEye P3", "SonoEye P5", "SonoEye P6", 
@@ -72,6 +72,8 @@ LISTA_STATUS_DANADAS = [
     "Waiting to be shipped to Mexico's office", 
     "Otros"
 ]
+
+COLS_USR_EXAM = ["Usuario", "Password", "Distribuidor", "Fecha_Registro", "Bloqueado_Manual", "Reintento_Permitido"]
 
 # ==========================================
 # FUNCIONES DE UTILIDAD Y AUDITORÍA
@@ -206,7 +208,6 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
     
     elif portal_seleccionado == "🎓 Portal de Distribuidores (Capacitación)":
         tab_log_dist, tab_reg_dist = st.tabs(["🔑 Iniciar Sesión", "📝 Crear Cuenta Nueva"])
-        cols_usr_exam = ["Usuario", "Password", "Distribuidor", "Fecha_Registro"]
 
         with tab_log_dist:
             with st.form("form_log_dist"):
@@ -215,9 +216,9 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                 if st.form_submit_button("Entrar a mis Exámenes"):
                     try:
                         df_usr_exam = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0)
-                        df_usr_exam = preparar_df(df_usr_exam, cols_usr_exam)
+                        df_usr_exam = preparar_df(df_usr_exam, COLS_USR_EXAM)
                     except:
-                        df_usr_exam = pd.DataFrame(columns=cols_usr_exam)
+                        df_usr_exam = pd.DataFrame(columns=COLS_USR_EXAM)
                         
                     if not df_usr_exam.empty:
                         df_usr_exam['Usuario'] = df_usr_exam['Usuario'].astype(str).str.strip()
@@ -246,9 +247,9 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                 if st.form_submit_button("Registrarme"):
                     try:
                         df_usr_exam = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=0)
-                        df_usr_exam = preparar_df(df_usr_exam, cols_usr_exam)
+                        df_usr_exam = preparar_df(df_usr_exam, COLS_USR_EXAM)
                     except:
-                        df_usr_exam = pd.DataFrame(columns=cols_usr_exam)
+                        df_usr_exam = pd.DataFrame(columns=COLS_USR_EXAM)
 
                     if nvo_u_dist and nvo_p_dist and empresa_dist:
                         existe = False
@@ -261,7 +262,9 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                                 "Usuario": str(nvo_u_dist).strip(),
                                 "Password": str(nvo_p_dist).strip(),
                                 "Distribuidor": str(empresa_dist).strip(),
-                                "Fecha_Registro": str(hoy)
+                                "Fecha_Registro": str(hoy),
+                                "Bloqueado_Manual": "NO",
+                                "Reintento_Permitido": "NO"
                             }])
                             conn_servicio.update(worksheet="Usuarios_Examenes", data=pd.concat([df_usr_exam, nuevo_reg], ignore_index=True))
                             st.success("Cuenta creada exitosamente. Ya puedes iniciar sesión en la pestaña de al lado.")
@@ -284,19 +287,43 @@ if st.session_state['logeado_dist']:
         st.rerun()
     st.markdown("---")
 
-    if not st.session_state['exam_in_progress']:
-        try:
-            df_config_ex = conn_servicio.read(worksheet="Configuracion", ttl=60).dropna(how='all')
-            if not df_config_ex.empty and "Tiempo_Pregunta_Segundos" in df_config_ex['Parametro'].values:
+    # ---- OBTENER PARÁMETROS DINÁMICOS DE CONFIGURACIÓN ----
+    TIEMPO_LIMITE_BD = 120
+    CALIFICACION_MINIMA_BD = 7.0
+
+    try:
+        df_config_ex = conn_servicio.read(worksheet="Configuracion", ttl=60).dropna(how='all')
+        if not df_config_ex.empty:
+            if "Tiempo_Pregunta_Segundos" in df_config_ex['Parametro'].values:
                 idx_c = df_config_ex.index[df_config_ex['Parametro'] == "Tiempo_Pregunta_Segundos"].tolist()[0]
                 TIEMPO_LIMITE_BD = int(float(df_config_ex.at[idx_c, 'Valor']))
-            else:
-                TIEMPO_LIMITE_BD = 120 
-        except:
-            TIEMPO_LIMITE_BD = 120
-            
-        tiempo_texto = f"{TIEMPO_LIMITE_BD // 60} minutos" if TIEMPO_LIMITE_BD % 60 == 0 else f"{TIEMPO_LIMITE_BD} segundos"
+            if "Calificacion_Minima" in df_config_ex['Parametro'].values:
+                idx_m = df_config_ex.index[df_config_ex['Parametro'] == "Calificacion_Minima"].tolist()[0]
+                CALIFICACION_MINIMA_BD = float(df_config_ex.at[idx_m, 'Valor'])
+    except: pass
+        
+    tiempo_texto = f"{TIEMPO_LIMITE_BD // 60} minutos" if TIEMPO_LIMITE_BD % 60 == 0 else f"{TIEMPO_LIMITE_BD} segundos"
 
+    # ---- OBTENER ESTADO DEL USUARIO (Bloqueos y Reintentos) ----
+    bloqueado_manual = False
+    reintento_permitido = False
+    try:
+        df_usr_check = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15)
+        df_usr_check = preparar_df(df_usr_check, COLS_USR_EXAM)
+        user_data = df_usr_check[df_usr_check['Usuario'] == st.session_state['usuario']]
+        if not user_data.empty:
+            bloqueado_manual = str(user_data.iloc[0]['Bloqueado_Manual']).strip().upper() == 'SI'
+            reintento_permitido = str(user_data.iloc[0]['Reintento_Permitido']).strip().upper() == 'SI'
+    except: pass
+
+    # Aplicar Bloqueo Manual del Administrador
+    if bloqueado_manual:
+        st.error("⛔ **Tu acceso a las evaluaciones ha sido bloqueado por el administrador.**")
+        st.info("No puedes realizar exámenes en este momento. Contacta a soporte o a tu administrador para más información.")
+        st.stop()
+
+
+    if not st.session_state['exam_in_progress']:
         try:
             df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=60).dropna(how='all')
         except Exception as e:
@@ -311,9 +338,9 @@ if st.session_state['logeado_dist']:
         st.subheader("Tus Evaluaciones Disponibles")
         examen_sel = st.selectbox("Selecciona el examen a realizar:", examenes_disponibles)
         
-        st.warning(f"⏱️ **ATENCIÓN:** Tienes **{tiempo_texto} máximo** por pregunta. El mínimo aprobatorio es de **7.0**. Si repruebas, deberás esperar 24 horas para un nuevo intento.")
+        st.warning(f"⏱️ **ATENCIÓN:** Tienes **{tiempo_texto} máximo** por pregunta. El mínimo aprobatorio es de **{CALIFICACION_MINIMA_BD}**. Si repruebas, deberás esperar 24 horas para un nuevo intento (salvo autorización especial).")
         
-        bloqueado = False
+        bloqueado_por_tiempo = False
         if st.session_state['usuario'].lower() != "admin_pruebas":
             try:
                 df_res_val = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
@@ -331,24 +358,36 @@ if st.session_state['logeado_dist']:
                         historial['Fecha_Parsed'] = historial['Fecha'].apply(parse_date)
                         ultimo = historial.sort_values(by='Fecha_Parsed', ascending=False).iloc[0]
 
-                        if float(ultimo['Calificacion']) < 7.0:
+                        # Verificamos si la última calificación es menor al mínimo dinámico
+                        if float(ultimo['Calificacion']) < CALIFICACION_MINIMA_BD:
                             ahora = datetime.now()
                             diff = ahora - ultimo['Fecha_Parsed']
                             
                             if diff < timedelta(hours=24):
-                                bloqueado = True
-                                segs_restantes = timedelta(hours=24).total_seconds() - diff.total_seconds()
-                                horas = int(segs_restantes // 3600)
-                                minutos = int((segs_restantes % 3600) // 60)
-                                st.error(f"⏳ **Bloqueo de seguridad:** Obtuviste **{ultimo['Calificacion']}/10** en tu último intento. Podrás volver a presentar este examen en **{horas} horas y {minutos} minutos**.")
+                                if reintento_permitido:
+                                    st.success("✨ **¡Tienes autorización especial!** El administrador te ha otorgado un reintento inmediato. El bloqueo de 24 horas ha sido ignorado.")
+                                else:
+                                    bloqueado_por_tiempo = True
+                                    segs_restantes = timedelta(hours=24).total_seconds() - diff.total_seconds()
+                                    horas = int(segs_restantes // 3600)
+                                    minutos = int((segs_restantes % 3600) // 60)
+                                    st.error(f"⏳ **Bloqueo de seguridad:** Obtuviste **{ultimo['Calificacion']}/10** en tu último intento. Podrás volver a presentar este examen en **{horas} horas y {minutos} minutos**.")
             except Exception as e:
                 pass 
 
-        if not bloqueado:
+        if not bloqueado_por_tiempo:
             if st.button("🚀 Comenzar Examen", type="primary"):
+                # Si usan su reintento especial, lo consumimos en la base de datos para que no sea infinito
+                if reintento_permitido:
+                    try:
+                        idx_u = df_usr_check.index[df_usr_check['Usuario'] == st.session_state['usuario']].tolist()[0]
+                        df_usr_check.at[idx_u, 'Reintento_Permitido'] = 'NO'
+                        conn_servicio.update(worksheet="Usuarios_Examenes", data=df_usr_check)
+                    except: pass
+
                 st.session_state['exam_in_progress'] = True
                 st.session_state['examen_actual'] = examen_sel
-                st.session_state['exam_start_time'] = datetime.now()  # Cronómetro total activo
+                st.session_state['exam_start_time'] = datetime.now()  
                 st.session_state['q_index'] = 0
                 st.session_state['respuestas_correctas'] = 0
                 st.session_state['areas_correctas'] = []
@@ -413,10 +452,11 @@ if st.session_state['logeado_dist']:
         else:
             calificacion_base10 = round((st.session_state['respuestas_correctas'] / total_preguntas) * 10, 1)
             
-            if calificacion_base10 >= 7.0:
+            # Usar calificación mínima dinámica
+            if calificacion_base10 >= CALIFICACION_MINIMA_BD:
                 st.success("🎉 ¡Felicidades! Has completado y aprobado la evaluación.")
             else:
-                st.error("⚠️ No has alcanzado el puntaje mínimo de 7.0. Deberás esperar 24 horas para volver a intentarlo.")
+                st.error(f"⚠️ No has alcanzado el puntaje mínimo de {CALIFICACION_MINIMA_BD}. Deberás esperar 24 horas para volver a intentarlo.")
                 
             area_fuerte = collections.Counter(st.session_state['areas_correctas']).most_common(1)[0][0] if st.session_state['areas_correctas'] else "N/A"
             area_debil = collections.Counter(st.session_state['areas_falladas']).most_common(1)[0][0] if st.session_state['areas_falladas'] else "N/A"
@@ -425,11 +465,10 @@ if st.session_state['logeado_dist']:
             st.metric(label="Tu Calificación Final", value=f"{calificacion_base10} / 10")
             
             if not st.session_state.get('examen_guardado', False):
-                # Cálculo de la duración total del examen
                 tiempo_total_segundos = (datetime.now() - st.session_state['exam_start_time']).total_seconds()
                 minutos = int(tiempo_total_segundos // 60)
                 segundos = int(tiempo_total_segundos % 60)
-                tiempo_texto = f"{minutos}m {segundos}s"
+                tiempo_texto_total = f"{minutos}m {segundos}s"
 
                 cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Tiempo_Total", "Fecha"]
                 try:
@@ -448,7 +487,7 @@ if st.session_state['logeado_dist']:
                     "Area_Mas_Debil": area_debil,
                     "Area_Mas_Fuerte": area_fuerte,
                     "Preguntas_Falladas": preg_falladas_str,
-                    "Tiempo_Total": tiempo_texto,  # Guardamos la duración calculada
+                    "Tiempo_Total": tiempo_texto_total,  
                     "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }])
                 
@@ -974,7 +1013,6 @@ elif division == MENU_EVE:
     cols_eve = ["ID", "Nombre del evento", "Distribuidor", "Fecha de inicio", "Fecha de termino", "Creado por"]
     
     try:
-        # Cambio Clave: caché de 15 segundos para proteger de cuotas de saturación rápidas
         df_eventos = conn_marketing.read(worksheet="Eventos", ttl=15)
         df_eventos = preparar_df(df_eventos, cols_eve).fillna("")
     except Exception as e:
@@ -1369,7 +1407,6 @@ elif division == MENU_DEMO:
 elif division == MENU_CAPA:
     st.header("🎓 Administración de Capacitación (LMS)")
     
-    # --- RENDERIZADO DINÁMICO DE PESTAÑAS SEGÚN EL ÁREA ---
     if st.session_state.get('area') in ['Aplicaciones', 'Invitado', 'Invitados']:
         tabs = st.tabs(["📈 Resultados y Análisis"])
         tab_res = tabs[0]
@@ -1383,34 +1420,46 @@ elif division == MENU_CAPA:
         
     if tab_usrs is not None:
         with tab_usrs:
-            st.subheader("Contraseñas y Accesos")
+            st.subheader("Contraseñas, Accesos y Bloqueos")
             try:
-                # Caché temporal aplicada para proteger las recargas del filtro avanzadas
-                df_usr_ex = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')
+                df_usr_ex = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15)
+                # Formateamos para asegurarnos que existan las nuevas columnas de bloqueo y reintento
+                df_usr_ex = preparar_df(df_usr_ex, COLS_USR_EXAM)
+                
                 if not df_usr_ex.empty:
                     st.dataframe(df_usr_ex, use_container_width=True, hide_index=True)
                     
                     if st.session_state.get('area') == 'Admin':
                         st.markdown("---")
-                        st.write("### ⚙️ Gestionar Distribuidores")
+                        st.write("### ⚙️ Gestionar Distribuidores Individuales")
                         
                         usuario_a_gestionar = st.selectbox("Selecciona el Usuario a gestionar:", df_usr_ex['Usuario'].unique())
                         
                         if usuario_a_gestionar:
                             idx_usr = df_usr_ex.index[df_usr_ex['Usuario'] == usuario_a_gestionar].tolist()[0]
                             
-                            tab_editar_usr, tab_borrar_usr = st.tabs(["✏️ Editar Usuario", "🗑️ Eliminar Usuario"])
+                            tab_editar_usr, tab_borrar_usr = st.tabs(["✏️ Editar Accesos y Permisos", "🗑️ Eliminar Usuario"])
                             
                             with tab_editar_usr:
                                 with st.form("form_edit_distribuidor"):
                                     e_pass = st.text_input("Contraseña", value=df_usr_ex.at[idx_usr, 'Password'])
                                     e_dist = st.text_input("Distribuidor/Empresa", value=df_usr_ex.at[idx_usr, 'Distribuidor'])
                                     
+                                    st.write("#### 🛡️ Control de Exámenes")
+                                    val_bloqueado = str(df_usr_ex.at[idx_usr, 'Bloqueado_Manual']).strip().upper() == 'SI'
+                                    e_bloqueado = st.checkbox("⛔ Bloquear acceso a exámenes (Bloqueo Manual del Sistema)", value=val_bloqueado)
+                                    
+                                    val_reintento = str(df_usr_ex.at[idx_usr, 'Reintento_Permitido']).strip().upper() == 'SI'
+                                    e_reintento = st.checkbox("🔄 Habilitar reintento inmediato (Ignorar el castigo de 24 hrs por reprobar)", value=val_reintento)
+                                    
                                     if st.form_submit_button("💾 Guardar Cambios"):
                                         df_usr_ex.at[idx_usr, 'Password'] = str(e_pass).strip()
                                         df_usr_ex.at[idx_usr, 'Distribuidor'] = str(e_dist).strip()
+                                        df_usr_ex.at[idx_usr, 'Bloqueado_Manual'] = 'SI' if e_bloqueado else 'NO'
+                                        df_usr_ex.at[idx_usr, 'Reintento_Permitido'] = 'SI' if e_reintento else 'NO'
+                                        
                                         conn_servicio.update(worksheet="Usuarios_Examenes", data=df_usr_ex)
-                                        st.success(f"Usuario {usuario_a_gestionar} actualizado exitosamente.")
+                                        st.success(f"Permisos de {usuario_a_gestionar} actualizados exitosamente.")
                                         st.rerun()
                                         
                             with tab_borrar_usr:
@@ -1436,7 +1485,6 @@ elif division == MENU_CAPA:
     with tab_res:
         st.subheader("Desempeño Global")
         try:
-            # Escudo clave antibloqueo en la pestaña de resultados generales
             df_res_ex = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
             if not df_res_ex.empty:
                 st.dataframe(df_res_ex, use_container_width=True, hide_index=True)
@@ -1525,7 +1573,6 @@ elif division == MENU_CAPA:
                                             usr_limpio = limpiar_texto(row['Usuario'])
                                             ex_limpio = limpiar_texto(row['Examen'])
                                             area_limpia = limpiar_texto(row['Area_Mas_Debil'])
-                                            # Incluimos la visualización del Tiempo Total si está guardada en la fila
                                             tiempo_fila = row['Tiempo_Total'] if 'Tiempo_Total' in row and pd.notna(row['Tiempo_Total']) else "N/A"
                                             
                                             texto = f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {row['Calificacion']}/10 | Duracion: {tiempo_fila} | Falla en: {area_limpia}"
@@ -1565,31 +1612,50 @@ elif division == MENU_CAPA:
             except:
                 df_config = pd.DataFrame(columns=["Parametro", "Valor"])
 
+            # Extraer tiempo
             if not df_config.empty and "Tiempo_Pregunta_Segundos" in df_config['Parametro'].values:
                 try:
-                    val = df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'].iloc[0]
-                    tiempo_actual = int(float(val))
+                    val_t = df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'].iloc[0]
+                    tiempo_actual = int(float(val_t))
                 except:
                     tiempo_actual = 120 
             else:
                 tiempo_actual = 120 
+
+            # Extraer calificación mínima
+            if not df_config.empty and "Calificacion_Minima" in df_config['Parametro'].values:
+                try:
+                    val_c = df_config.loc[df_config['Parametro'] == "Calificacion_Minima", 'Valor'].iloc[0]
+                    calif_actual = float(val_c)
+                except:
+                    calif_actual = 7.0
+            else:
+                calif_actual = 7.0
                 
             with st.form("form_config_exam"):
                 nvo_tiempo = st.number_input("⏱️ Tiempo máximo por pregunta (en segundos):", min_value=10, max_value=600, value=tiempo_actual, step=10)
                 st.caption("Ejemplo: 60 = 1 minuto | 120 = 2 minutos | 180 = 3 minutos")
                 
+                nva_calif = st.number_input("🎯 Calificación mínima para aprobar (Ej. 7.0):", min_value=0.0, max_value=10.0, value=calif_actual, step=0.1)
+                
                 if st.form_submit_button("💾 Guardar Configuración"):
                     if not df_config.empty and 'Valor' in df_config.columns:
                         df_config['Valor'] = df_config['Valor'].astype(str)
 
+                    # Actualizar Tiempo
                     if df_config.empty or "Tiempo_Pregunta_Segundos" not in df_config['Parametro'].values:
-                        nvo_reg = pd.DataFrame([{"Parametro": "Tiempo_Pregunta_Segundos", "Valor": str(nvo_tiempo)}])
-                        df_config = pd.concat([df_config, nvo_reg], ignore_index=True)
+                        df_config = pd.concat([df_config, pd.DataFrame([{"Parametro": "Tiempo_Pregunta_Segundos", "Valor": str(nvo_tiempo)}])], ignore_index=True)
                     else:
                         df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'] = str(nvo_tiempo)
+
+                    # Actualizar Calificación Mínima
+                    if "Calificacion_Minima" not in df_config['Parametro'].values:
+                        df_config = pd.concat([df_config, pd.DataFrame([{"Parametro": "Calificacion_Minima", "Valor": str(nva_calif)}])], ignore_index=True)
+                    else:
+                        df_config.loc[df_config['Parametro'] == "Calificacion_Minima", 'Valor'] = str(nva_calif)
                     
                     conn_servicio.update(worksheet="Configuracion", data=df_config)
-                    st.success(f"Tiempo actualizado correctamente a {nvo_tiempo} segundos.")
+                    st.success("Configuraciones del sistema actualizadas correctamente.")
                     st.rerun()
 
 
