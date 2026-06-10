@@ -73,7 +73,8 @@ LISTA_STATUS_DANADAS = [
     "Otros"
 ]
 
-COLS_USR_EXAM = ["Usuario", "Password", "Distribuidor", "Fecha_Registro", "Bloqueado_Manual", "Reintento_Permitido"]
+# --- SE AGREGA LA COLUMNA "País" ---
+COLS_USR_EXAM = ["Usuario", "Password", "Distribuidor", "País", "Fecha_Registro", "Bloqueado_Manual", "Reintento_Permitido"]
 
 # ==========================================
 # FUNCIONES DE UTILIDAD Y AUDITORÍA
@@ -240,9 +241,12 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
         with tab_reg_dist:
             with st.form("form_reg_dist"):
                 st.info("Crea tu cuenta temporal para realizar tus evaluaciones.")
-                nvo_u_dist = st.text_input("Escribe tu nombre completo")
+                nvo_u_dist = st.text_input("Escribe tu nombre y apellidos completos")
                 nvo_p_dist = st.text_input("Elige una Contraseña")
+                # --- NUEVO CAMPO DE PAÍS ---
+                pais_dist = st.text_input("País")
                 empresa_dist = st.text_input("Empresa / Distribuidor al que perteneces")
+
                 
                 if st.form_submit_button("Registrarme"):
                     try:
@@ -251,7 +255,7 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                     except:
                         df_usr_exam = pd.DataFrame(columns=COLS_USR_EXAM)
 
-                    if nvo_u_dist and nvo_p_dist and empresa_dist:
+                    if nvo_u_dist and nvo_p_dist and empresa_dist and pais_dist:
                         existe = False
                         if not df_usr_exam.empty:
                             existe = str(nvo_u_dist).strip() in df_usr_exam['Usuario'].astype(str).str.strip().values
@@ -261,7 +265,9 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                             nuevo_reg = pd.DataFrame([{
                                 "Usuario": str(nvo_u_dist).strip(),
                                 "Password": str(nvo_p_dist).strip(),
-                                "Distribuidor": str(empresa_dist).strip(),
+                                # --- SE GUARDAN EN MAYÚSCULAS ---
+                                "Distribuidor": str(empresa_dist).strip().upper(),
+                                "País": str(pais_dist).strip().upper(),
                                 "Fecha_Registro": str(hoy),
                                 "Bloqueado_Manual": "NO",
                                 "Reintento_Permitido": "NO"
@@ -269,7 +275,7 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                             conn_servicio.update(worksheet="Usuarios_Examenes", data=pd.concat([df_usr_exam, nuevo_reg], ignore_index=True))
                             st.success("Cuenta creada exitosamente. Ya puedes iniciar sesión en la pestaña de al lado.")
                     else:
-                        st.error("Debes llenar todos los campos.")
+                        st.error("Debes llenar todos los campos (Nombre, Contraseña, Empresa y País).")
     st.stop()
 
 
@@ -1491,6 +1497,9 @@ elif division == MENU_CAPA:
                                     e_pass = st.text_input("Contraseña", value=df_usr_ex.at[idx_usr, 'Password'])
                                     e_dist = st.text_input("Distribuidor/Empresa", value=df_usr_ex.at[idx_usr, 'Distribuidor'])
                                     
+                                    # --- SE AGREGA EL CAMPO PAÍS EN EL EDITOR ---
+                                    e_pais = st.text_input("País", value=df_usr_ex.at[idx_usr, 'País'] if 'País' in df_usr_ex.columns else "")
+                                    
                                     st.write("#### 🛡️ Control de Exámenes")
                                     val_bloqueado = str(df_usr_ex.at[idx_usr, 'Bloqueado_Manual']).strip().upper() == 'SI'
                                     e_bloqueado = st.checkbox("⛔ Bloquear acceso a exámenes (Bloqueo Manual del Sistema)", value=val_bloqueado)
@@ -1500,7 +1509,10 @@ elif division == MENU_CAPA:
                                     
                                     if st.form_submit_button("💾 Guardar Cambios"):
                                         df_usr_ex.at[idx_usr, 'Password'] = str(e_pass).strip()
-                                        df_usr_ex.at[idx_usr, 'Distribuidor'] = str(e_dist).strip()
+                                        df_usr_ex.at[idx_usr, 'Distribuidor'] = str(e_dist).strip().upper()
+                                        # --- SE GUARDA EN MAYÚSCULAS ---
+                                        df_usr_ex.at[idx_usr, 'País'] = str(e_pais).strip().upper()
+                                        
                                         df_usr_ex.at[idx_usr, 'Bloqueado_Manual'] = 'SI' if e_bloqueado else 'NO'
                                         df_usr_ex.at[idx_usr, 'Reintento_Permitido'] = 'SI' if e_reintento else 'NO'
                                         
