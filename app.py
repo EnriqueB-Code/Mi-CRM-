@@ -244,7 +244,7 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                 nvo_u_dist = st.text_input("Escribe tu nombre y apellidos completos")
                 nvo_p_dist = st.text_input("Elige una Contraseña")
                 # --- NUEVO CAMPO DE PAÍS ---
-                pais_dist = st.text_input("País")
+                pais_dist = st.text_input("País de la empresa")
                 empresa_dist = st.text_input("Empresa / Distribuidor al que perteneces")
 
                 
