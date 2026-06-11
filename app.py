@@ -3,6 +3,7 @@ import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 from datetime import date, datetime, timedelta
 import collections
+import random  # <-- NUEVO: Importación necesaria para el sistema anti-trampas
 
 # Intentamos importar FPDF para los reportes. Si no está, no rompemos el programa.
 try:
@@ -34,7 +35,10 @@ def inicializar_estado():
         'preguntas_falladas': [],
         'q_start_time': None,
         'exam_start_time': None,
-        'examen_guardado': False
+        'examen_guardado': False,
+        # --- NUEVOS ESTADOS PARA ANTI-TRAMPA ---
+        'opciones_actuales': None,      
+        'texto_correcta_actual': None   
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -324,7 +328,6 @@ if st.session_state['logeado_dist']:
         st.info("No puedes realizar exámenes en este momento. Contacta a soporte o a tu administrador para más información.")
         st.stop()
 
-
     if not st.session_state['exam_in_progress']:
         try:
             df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=60).dropna(how='all')
@@ -360,7 +363,6 @@ if st.session_state['logeado_dist']:
                         historial['Fecha_Parsed'] = historial['Fecha'].apply(parse_date)
                         ultimo = historial.sort_values(by='Fecha_Parsed', ascending=False).iloc[0]
 
-                        # Verificamos si la última calificación es menor al mínimo dinámico
                         if float(ultimo['Calificacion']) < CALIFICACION_MINIMA_BD:
                             ahora = datetime.now()
                             diff = ahora - ultimo['Fecha_Parsed']
@@ -379,7 +381,6 @@ if st.session_state['logeado_dist']:
 
         if not bloqueado_por_tiempo:
             if st.button("🚀 Comenzar Examen", type="primary"):
-                # Si usan su reintento especial, lo consumimos en la base de datos para que no sea infinito
                 if reintento_permitido:
                     try:
                         idx_u = df_usr_check.index[df_usr_check['Usuario'] == st.session_state['usuario']].tolist()[0]
@@ -398,7 +399,15 @@ if st.session_state['logeado_dist']:
                 st.session_state['q_start_time'] = datetime.now()
                 st.session_state['examen_guardado'] = False 
                 
-                st.session_state['df_examen_actual'] = df_banco[df_banco['Examen'] == examen_sel].reset_index(drop=True)
+                # --- RESETEAR ANTI-TRAMPAS ---
+                st.session_state['opciones_actuales'] = None
+                st.session_state['texto_correcta_actual'] = None
+                
+                # --- 1. ALEATORIZAR PREGUNTAS ---
+                # Tomamos las preguntas del examen y las mezclamos (sample(frac=1))
+                df_preg_filtradas = df_banco[df_banco['Examen'] == examen_sel].copy()
+                st.session_state['df_examen_actual'] = df_preg_filtradas.sample(frac=1).reset_index(drop=True)
+                
                 st.session_state['tiempo_limite'] = TIEMPO_LIMITE_BD
                 st.rerun()
 
@@ -417,18 +426,39 @@ if st.session_state['logeado_dist']:
             
             st.markdown(f"### {pregunta_actual['Pregunta']}")
             
-            opciones = {
-                "A": pregunta_actual.get('Opcion_A', 'A'),
-                "B": pregunta_actual.get('Opcion_B', 'B'),
-                "C": pregunta_actual.get('Opcion_C', 'C'),
-                "D": pregunta_actual.get('Opcion_D', 'D')
-            }
-            
-            respuesta_usuario = st.radio("Selecciona tu respuesta:", ["A", "B", "C", "D"], format_func=lambda x: f"{x}) {opciones[x]}")
+            # --- 2. ALEATORIZAR OPCIONES DE RESPUESTA ---
+            if st.session_state.get('opciones_actuales') is None:
+                # Extraemos las 4 opciones de la base de datos
+                dict_opciones = {
+                    "A": str(pregunta_actual.get('Opcion_A', '')).strip(),
+                    "B": str(pregunta_actual.get('Opcion_B', '')).strip(),
+                    "C": str(pregunta_actual.get('Opcion_C', '')).strip(),
+                    "D": str(pregunta_actual.get('Opcion_D', '')).strip()
+                }
+                
+                # Filtramos las opciones vacías (útil para preguntas de Falso/Verdadero que solo usan A y B)
+                opciones_validas = [texto for letra, texto in dict_opciones.items() if texto != ""]
+                
+                # Ubicamos cuál es el texto exacto de la respuesta correcta original
+                letra_correcta_bd = str(pregunta_actual['Respuesta_Correcta']).strip().upper()
+                texto_correcto_real = dict_opciones.get(letra_correcta_bd, "")
+                
+                # Mezclamos la lista de opciones válidas
+                random.shuffle(opciones_validas)
+                
+                # Guardamos en session_state para que los radio buttons no se cambien de orden solos al hacer clic
+                st.session_state['opciones_actuales'] = opciones_validas
+                st.session_state['texto_correcta_actual'] = texto_correcto_real
+
+            # Renderizamos las opciones mezcladas. El usuario ve el texto directo.
+            respuesta_usuario = st.radio("Selecciona tu respuesta:", st.session_state['opciones_actuales'])
             
             if st.button("Siguiente Pregunta"):
                 tiempo_transcurrido = (datetime.now() - st.session_state['q_start_time']).total_seconds()
-                correcta = str(pregunta_actual['Respuesta_Correcta']).strip().upper()
+                
+                # Validamos basándonos en el texto en lugar de la letra (A,B,C,D)
+                correcta = st.session_state['texto_correcta_actual']
+                
                 area = str(pregunta_actual.get('Area_Conocimiento', 'General')).strip()
                 id_p = str(pregunta_actual.get('ID_Pregunta', 'Desconocido')).strip()
                 texto_pregunta = str(pregunta_actual['Pregunta']).strip()
@@ -444,17 +474,23 @@ if st.session_state['logeado_dist']:
                         st.session_state['areas_correctas'].append(area)
                     else:
                         st.session_state['areas_falladas'].append(area)
-                        falla_detalle = f"{id_p}: {texto_pregunta} (Eligió: {respuesta_usuario})"
+                        # --- MEJORA EN REPORTE --- 
+                        # Ahora guardamos en el reporte exactamente qué texto eligió y cuál era el real.
+                        falla_detalle = f"{id_p}: {texto_pregunta} (Eligió: {respuesta_usuario} | Correcta: {correcta})"
                         st.session_state['preguntas_falladas'].append(falla_detalle)
                 
                 st.session_state['q_index'] += 1
                 st.session_state['q_start_time'] = datetime.now()
+                
+                # Limpiamos las variables para que la siguiente pregunta se vuelva a mezclar
+                st.session_state['opciones_actuales'] = None
+                st.session_state['texto_correcta_actual'] = None
+                
                 st.rerun()
                 
         else:
             calificacion_base10 = round((st.session_state['respuestas_correctas'] / total_preguntas) * 10, 1)
             
-            # Usar calificación mínima dinámica
             if calificacion_base10 >= CALIFICACION_MINIMA_BD:
                 st.success("🎉 ¡Felicidades! Has completado y aprobado la evaluación.")
             else:
@@ -501,6 +537,8 @@ if st.session_state['logeado_dist']:
                 st.session_state['examen_actual'] = None
                 st.session_state['df_examen_actual'] = None
                 st.session_state['examen_guardado'] = False 
+                st.session_state['opciones_actuales'] = None
+                st.session_state['texto_correcta_actual'] = None
                 st.rerun()
 
     st.stop()
@@ -1623,7 +1661,7 @@ elif division == MENU_CAPA:
                                     pdf.cell(200, 10, txt=f"Empresa/Distribuidor: {limpiar_texto(distribuidor_selec)}", ln=True)
                                     pdf.cell(200, 10, txt=f"Fecha de Reporte: {hoy}", ln=True)
                                     # --- SE IMPRIME EL PROMEDIO EN EL PDF ---
-                                    pdf.cell(200, 10, txt=f"Calificacion Promedio Global del distribuidor: {promedio_dist:.1f}/10", ln=True)
+                                    pdf.cell(200, 10, txt=f"Calificacion Promedio Global: {promedio_dist:.1f}/10", ln=True)
                                     pdf.ln(10)
                                     
                                     pdf.set_font("Arial", 'B', 12)
