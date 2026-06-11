@@ -3,8 +3,8 @@ import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 from datetime import date, datetime, timedelta
 import collections
-import random  # <-- Necesario para el sistema anti-trampas
-import time    # <-- NUEVO: Necesario para el sistema de reintentos anti-choque
+import random
+import time 
 
 # Intentamos importar FPDF para los reportes. Si no está, no rompemos el programa.
 try:
@@ -37,9 +37,9 @@ def inicializar_estado():
         'q_start_time': None,
         'exam_start_time': None,
         'examen_guardado': False,
-        # --- NUEVOS ESTADOS PARA ANTI-TRAMPA ---
         'opciones_actuales': None,      
-        'texto_correcta_actual': None   
+        'texto_correcta_actual': None,
+        'calif_minima_bd': 7.0 # Nuevo estado para guardar la memoria del config
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -294,42 +294,44 @@ if st.session_state['logeado_dist']:
         st.rerun()
     st.markdown("---")
 
-    # ---- OBTENER PARÁMETROS DINÁMICOS DE CONFIGURACIÓN ----
-    TIEMPO_LIMITE_BD = 120
-    CALIFICACION_MINIMA_BD = 7.0
-
-    try:
-        df_config_ex = conn_servicio.read(worksheet="Configuracion", ttl=60).dropna(how='all')
-        if not df_config_ex.empty:
-            if "Tiempo_Pregunta_Segundos" in df_config_ex['Parametro'].values:
-                idx_c = df_config_ex.index[df_config_ex['Parametro'] == "Tiempo_Pregunta_Segundos"].tolist()[0]
-                TIEMPO_LIMITE_BD = int(float(df_config_ex.at[idx_c, 'Valor']))
-            if "Calificacion_Minima" in df_config_ex['Parametro'].values:
-                idx_m = df_config_ex.index[df_config_ex['Parametro'] == "Calificacion_Minima"].tolist()[0]
-                CALIFICACION_MINIMA_BD = float(df_config_ex.at[idx_m, 'Valor'])
-    except: pass
-        
-    tiempo_texto = f"{TIEMPO_LIMITE_BD // 60} minutos" if TIEMPO_LIMITE_BD % 60 == 0 else f"{TIEMPO_LIMITE_BD} segundos"
-
-    # ---- OBTENER ESTADO DEL USUARIO (Bloqueos y Reintentos) ----
-    bloqueado_manual = False
-    reintento_permitido = False
-    try:
-        df_usr_check = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15)
-        df_usr_check = preparar_df(df_usr_check, COLS_USR_EXAM)
-        user_data = df_usr_check[df_usr_check['Usuario'] == st.session_state['usuario']]
-        if not user_data.empty:
-            bloqueado_manual = str(user_data.iloc[0]['Bloqueado_Manual']).strip().upper() == 'SI'
-            reintento_permitido = str(user_data.iloc[0]['Reintento_Permitido']).strip().upper() == 'SI'
-    except: pass
-
-    # Aplicar Bloqueo Manual del Administrador
-    if bloqueado_manual:
-        st.error("⛔ **Tu acceso a las evaluaciones ha sido bloqueado por el administrador.**")
-        st.info("No puedes realizar exámenes en este momento. Contacta a soporte o a tu administrador para más información.")
-        st.stop()
-
+    # ==========================================
+    # OPTIMIZACIÓN: SOLO LEER API ANTES DE EMPEZAR EL EXAMEN
+    # ==========================================
     if not st.session_state['exam_in_progress']:
+        TIEMPO_LIMITE_BD = 120
+        CALIFICACION_MINIMA_BD = 7.0
+
+        try:
+            df_config_ex = conn_servicio.read(worksheet="Configuracion", ttl=60).dropna(how='all')
+            if not df_config_ex.empty:
+                if "Tiempo_Pregunta_Segundos" in df_config_ex['Parametro'].values:
+                    idx_c = df_config_ex.index[df_config_ex['Parametro'] == "Tiempo_Pregunta_Segundos"].tolist()[0]
+                    TIEMPO_LIMITE_BD = int(float(df_config_ex.at[idx_c, 'Valor']))
+                if "Calificacion_Minima" in df_config_ex['Parametro'].values:
+                    idx_m = df_config_ex.index[df_config_ex['Parametro'] == "Calificacion_Minima"].tolist()[0]
+                    CALIFICACION_MINIMA_BD = float(df_config_ex.at[idx_m, 'Valor'])
+        except: pass
+            
+        # Guardar en memoria para no volver a consultar la BD
+        st.session_state['calif_minima_bd'] = CALIFICACION_MINIMA_BD
+        tiempo_texto = f"{TIEMPO_LIMITE_BD // 60} minutos" if TIEMPO_LIMITE_BD % 60 == 0 else f"{TIEMPO_LIMITE_BD} segundos"
+
+        bloqueado_manual = False
+        reintento_permitido = False
+        try:
+            df_usr_check = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15)
+            df_usr_check = preparar_df(df_usr_check, COLS_USR_EXAM)
+            user_data = df_usr_check[df_usr_check['Usuario'] == st.session_state['usuario']]
+            if not user_data.empty:
+                bloqueado_manual = str(user_data.iloc[0]['Bloqueado_Manual']).strip().upper() == 'SI'
+                reintento_permitido = str(user_data.iloc[0]['Reintento_Permitido']).strip().upper() == 'SI'
+        except: pass
+
+        if bloqueado_manual:
+            st.error("⛔ **Tu acceso a las evaluaciones ha sido bloqueado por el administrador.**")
+            st.info("No puedes realizar exámenes en este momento. Contacta a soporte o a tu administrador para más información.")
+            st.stop()
+
         try:
             df_banco = conn_servicio.read(worksheet="Banco_Preguntas", ttl=60).dropna(how='all')
         except Exception as e:
@@ -400,20 +402,22 @@ if st.session_state['logeado_dist']:
                 st.session_state['q_start_time'] = datetime.now()
                 st.session_state['examen_guardado'] = False 
                 
-                # --- RESETEAR ANTI-TRAMPAS ---
                 st.session_state['opciones_actuales'] = None
                 st.session_state['texto_correcta_actual'] = None
                 
-                # --- 1. ALEATORIZAR PREGUNTAS ---
                 df_preg_filtradas = df_banco[df_banco['Examen'] == examen_sel].copy()
                 st.session_state['df_examen_actual'] = df_preg_filtradas.sample(frac=1).reset_index(drop=True)
                 
                 st.session_state['tiempo_limite'] = TIEMPO_LIMITE_BD
                 st.rerun()
 
+    # ==========================================
+    # LÓGICA DURANTE Y AL FINAL DEL EXAMEN (CERO LLAMADAS A LA API HASTA GUARDAR)
+    # ==========================================
     else:
         df_examen_actual = st.session_state['df_examen_actual']
         TIEMPO_LIMITE = st.session_state['tiempo_limite']
+        CALIFICACION_MINIMA_BD = st.session_state.get('calif_minima_bd', 7.0) # Recuperar de memoria
         total_preguntas = len(df_examen_actual)
         q_idx = st.session_state['q_index']
 
@@ -426,7 +430,6 @@ if st.session_state['logeado_dist']:
             
             st.markdown(f"### {pregunta_actual['Pregunta']}")
             
-            # --- 2. ALEATORIZAR OPCIONES DE RESPUESTA ---
             if st.session_state.get('opciones_actuales') is None:
                 dict_opciones = {
                     "A": str(pregunta_actual.get('Opcion_A', '')).strip(),
@@ -436,7 +439,6 @@ if st.session_state['logeado_dist']:
                 }
                 
                 opciones_validas = [texto for letra, texto in dict_opciones.items() if texto != ""]
-                
                 letra_correcta_bd = str(pregunta_actual['Respuesta_Correcta']).strip().upper()
                 texto_correcto_real = dict_opciones.get(letra_correcta_bd, "")
                 
@@ -471,7 +473,6 @@ if st.session_state['logeado_dist']:
                 
                 st.session_state['q_index'] += 1
                 st.session_state['q_start_time'] = datetime.now()
-                
                 st.session_state['opciones_actuales'] = None
                 st.session_state['texto_correcta_actual'] = None
                 
@@ -498,16 +499,9 @@ if st.session_state['logeado_dist']:
                 tiempo_texto_total = f"{minutos}m {segundos}s"
 
                 cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Tiempo_Total", "Fecha"]
-                try:
-                    df_resultados = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0)
-                    df_resultados = preparar_df(df_resultados, cols_res)
-                except:
-                    df_resultados = pd.DataFrame(columns=cols_res)
-
-                nuevo_id_res = int(df_resultados['ID_Resultado'].max() + 1) if not df_resultados.empty and 'ID_Resultado' in df_resultados.columns else 1
                 
                 nuevo_res = pd.DataFrame([{
-                    "ID_Resultado": nuevo_id_res,
+                    "ID_Resultado": 0, # Se actualizará en el loop
                     "Usuario": st.session_state['usuario'],
                     "Examen": st.session_state['examen_actual'],
                     "Calificacion": calificacion_base10,
@@ -518,19 +512,33 @@ if st.session_state['logeado_dist']:
                     "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }])
                 
-                # --- NUEVO SISTEMA DE REINTENTO ANTI-CHOQUES ---
-                max_reintentos = 3
-                for intento in range(max_reintentos):
-                    try:
-                        conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
-                        st.session_state['examen_guardado'] = True
-                        break
-                    except Exception as e:
-                        if intento < max_reintentos - 1:
-                            time.sleep(2)  # Espera 2 segundos antes de volver a intentar
-                        else:
-                            st.error("⚠️ Los servidores de Google están saturados procesando otros exámenes en este momento. Por favor, toma una captura de tu calificación y avisa al administrador.")
-                            st.stop()
+                # --- SISTEMA DE ESPERA CON SPINNER VISUAL ---
+                max_reintentos = 5
+                exito_guardado = False
+                
+                with st.spinner("💾 Guardando tus resultados en la base de datos... Por favor, no cierres esta ventana."):
+                    for intento in range(max_reintentos):
+                        try:
+                            # La lectura y escritura debe ocurrir adentro del intento
+                            df_resultados = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0)
+                            df_resultados = preparar_df(df_resultados, cols_res)
+                            
+                            nuevo_id_res = int(df_resultados['ID_Resultado'].max() + 1) if not df_resultados.empty and 'ID_Resultado' in df_resultados.columns else 1
+                            nuevo_res.at[0, 'ID_Resultado'] = nuevo_id_res
+                            
+                            conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
+                            st.session_state['examen_guardado'] = True
+                            exito_guardado = True
+                            break # Salir del loop si funciona
+                        except Exception as e:
+                            if intento < max_reintentos - 1:
+                                # Pausa aleatoria para evitar choques simultáneos
+                                time.sleep(random.uniform(3.0, 7.0))
+                            else:
+                                st.error(f"⚠️ Servidores de Google muy saturados. No pudimos guardar tu examen en este momento. Por favor, toma una captura de pantalla de esta página (Calificación: {calificacion_base10}/10) y avisa al administrador.")
+                
+                if exito_guardado:
+                    st.success("✅ Resultados guardados y registrados correctamente en el sistema.")
             
             if st.button("Volver al Inicio"):
                 st.session_state['exam_in_progress'] = False
@@ -1290,7 +1298,7 @@ elif division == MENU_INV:
                 with st.form("form_danada", clear_on_submit=True):
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        pn_d = text_input("PN (Número de Parte)")
+                        pn_d = st.text_input("PN (Número de Parte)")
                         sn_d = st.text_input("SN (Número de Serie)")
                         desc_d = st.text_area("Description")
                     with c2:
