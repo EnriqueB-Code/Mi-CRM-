@@ -73,7 +73,6 @@ LISTA_STATUS_DANADAS = [
     "Otros"
 ]
 
-# --- SE AGREGA LA COLUMNA "País" ---
 COLS_USR_EXAM = ["Usuario", "Password", "Distribuidor", "País", "Fecha_Registro", "Bloqueado_Manual", "Reintento_Permitido"]
 
 # ==========================================
@@ -241,12 +240,10 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
         with tab_reg_dist:
             with st.form("form_reg_dist"):
                 st.info("Crea tu cuenta temporal para realizar tus evaluaciones.")
-                nvo_u_dist = st.text_input("Escribe tu nombre y apellidos completos")
+                nvo_u_dist = st.text_input("Escribe tu nombre completo")
                 nvo_p_dist = st.text_input("Elige una Contraseña")
-                # --- NUEVO CAMPO DE PAÍS ---
-                pais_dist = st.text_input("País de la empresa")
                 empresa_dist = st.text_input("Empresa / Distribuidor al que perteneces")
-
+                pais_dist = st.text_input("País")
                 
                 if st.form_submit_button("Registrarme"):
                     try:
@@ -265,7 +262,6 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
                             nuevo_reg = pd.DataFrame([{
                                 "Usuario": str(nvo_u_dist).strip(),
                                 "Password": str(nvo_p_dist).strip(),
-                                # --- SE GUARDAN EN MAYÚSCULAS ---
                                 "Distribuidor": str(empresa_dist).strip().upper(),
                                 "País": str(pais_dist).strip().upper(),
                                 "Fecha_Registro": str(hoy),
@@ -1017,7 +1013,6 @@ elif division == MENU_MKT:
 elif division == MENU_EVE:
     st.header("📅 Calendario de Eventos")
     
-    # --- COLUMNAS ACTUALIZADAS ---
     cols_eve = ["ID", "Nombre del evento", "Tipo de evento", "Lugar del evento", "Distribuidor", "Fecha de inicio", "Fecha de termino", "KOL", "Responsable", "Creado por"]
     
     try:
@@ -1615,8 +1610,20 @@ elif division == MENU_CAPA:
                                     def limpiar_texto(texto):
                                         return str(texto).encode('latin-1', 'replace').decode('latin-1')
 
+                                    # --- CALCULAR PROMEDIO GLOBAL DEL DISTRIBUIDOR ---
+                                    try:
+                                        res_dist = df_res_ex[df_res_ex['Usuario'].isin(usuarios_del_dist)].copy()
+                                        if not res_dist.empty:
+                                            promedio_dist = res_dist['Calificacion'].astype(float).mean()
+                                        else:
+                                            promedio_dist = 0.0
+                                    except:
+                                        promedio_dist = 0.0
+
                                     pdf.cell(200, 10, txt=f"Empresa/Distribuidor: {limpiar_texto(distribuidor_selec)}", ln=True)
                                     pdf.cell(200, 10, txt=f"Fecha de Reporte: {hoy}", ln=True)
+                                    # --- SE IMPRIME EL PROMEDIO EN EL PDF ---
+                                    pdf.cell(200, 10, txt=f"Calificacion Promedio Global: {promedio_dist:.1f}/10", ln=True)
                                     pdf.ln(10)
                                     
                                     pdf.set_font("Arial", 'B', 12)
