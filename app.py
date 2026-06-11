@@ -4,6 +4,7 @@ from streamlit_gsheets import GSheetsConnection
 from datetime import date, datetime, timedelta
 import collections
 import random  # <-- NUEVO: Importación necesaria para el sistema anti-trampas
+import time  # <-- NUEVO: Para manejar las pausas de reintento
 
 # Intentamos importar FPDF para los reportes. Si no está, no rompemos el programa.
 try:
@@ -517,7 +518,7 @@ if st.session_state['logeado_dist']:
 
                 nuevo_id_res = int(df_resultados['ID_Resultado'].max() + 1) if not df_resultados.empty and 'ID_Resultado' in df_resultados.columns else 1
                 
-                nuevo_res = pd.DataFrame([{
+nuevo_res = pd.DataFrame([{
                     "ID_Resultado": nuevo_id_res,
                     "Usuario": st.session_state['usuario'],
                     "Examen": st.session_state['examen_actual'],
@@ -529,9 +530,22 @@ if st.session_state['logeado_dist']:
                     "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }])
                 
-                conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
-                st.session_state['examen_guardado'] = True
-            
+                # --- NUEVO SISTEMA DE REINTENTO ANTI-CHOQUES ---
+                max_reintentos = 3
+                for intento in range(max_reintentos):
+                    try:
+                        # Intenta guardar el resultado
+                        conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
+                        st.session_state['examen_guardado'] = True
+                        break  # Si tiene éxito, rompe el ciclo y continúa
+                    except Exception as e:
+                        if intento < max_reintentos - 1:
+                            # Si falla, espera 2 segundos y vuelve a intentar (evita el choque con el otro usuario)
+                            time.sleep(2)
+                        else:
+                            # Si falla 3 veces seguidas, muestra un mensaje amigable en lugar de colapsar la app
+                            st.error("⚠️ Los servidores de Google están saturados en este momento procesando otros exámenes. Por favor, toma una captura de tu calificación y avisa al administrador.")
+                            st.stop()            
             if st.button("Volver al Inicio"):
                 st.session_state['exam_in_progress'] = False
                 st.session_state['examen_actual'] = None
