@@ -4,7 +4,6 @@ from streamlit_gsheets import GSheetsConnection
 from datetime import date, datetime, timedelta
 import collections
 import random  # <-- NUEVO: Importación necesaria para el sistema anti-trampas
-import time  # <-- NUEVO: Para manejar las pausas de reintento
 
 # Intentamos importar FPDF para los reportes. Si no está, no rompemos el programa.
 try:
@@ -530,23 +529,9 @@ if st.session_state['logeado_dist']:
                     "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }])
                 
-# --- NUEVO SISTEMA DE REINTENTO ANTI-CHOQUES ---
-                max_reintentos = 3
-                for intento in range(max_reintentos):
-                    try:
-                        # Intenta guardar el resultado
-                        conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
-                        st.session_state['examen_guardado'] = True
-                        break  # Si tiene éxito, rompe el ciclo y continúa
-                    except Exception as e:
-                        if intento < max_reintentos - 1:
-                            # Si falla, espera 2 segundos y vuelve a intentar (evita el choque con el otro usuario)
-                            time.sleep(2)
-                        else:
-                            # Si falla 3 veces seguidas, muestra un mensaje amigable en lugar de colapsar la app
-                            st.error("⚠️ Los servidores de Google están saturados en este momento procesando otros exámenes. Por favor, toma una captura de tu calificación y avisa al administrador.")
-                            st.stop()
-                            
+                conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
+                st.session_state['examen_guardado'] = True
+            
             if st.button("Volver al Inicio"):
                 st.session_state['exam_in_progress'] = False
                 st.session_state['examen_actual'] = None
