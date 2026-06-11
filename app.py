@@ -1623,7 +1623,7 @@ elif division == MENU_CAPA:
                                     pdf.cell(200, 10, txt=f"Empresa/Distribuidor: {limpiar_texto(distribuidor_selec)}", ln=True)
                                     pdf.cell(200, 10, txt=f"Fecha de Reporte: {hoy}", ln=True)
                                     # --- SE IMPRIME EL PROMEDIO EN EL PDF ---
-                                    pdf.cell(200, 10, txt=f"Calificacion Promedio Global: {promedio_dist:.1f}/10", ln=True)
+                                    pdf.cell(200, 10, txt=f"Calificacion Promedio Global del distribuidor: {promedio_dist:.1f}/10", ln=True)
                                     pdf.ln(10)
                                     
                                     pdf.set_font("Arial", 'B', 12)
