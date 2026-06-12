@@ -1686,7 +1686,7 @@ elif division == MENU_CAPA:
                                             area_limpia = limpiar_texto(row['Area_Mas_Debil'])
                                             tiempo_fila = row['Tiempo_Total'] if 'Tiempo_Total' in row and pd.notna(row['Tiempo_Total']) else "N/A"
                                             
-                                            texto = f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {row['Calificacion']}/10 | Duracion: {tiempo_fila} | Falla en: {area_limpia}"
+                                            texto = f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {row['Calificacion']}/10 | Duracion: {tiempo_fila}"
                                             pdf.cell(200, 8, txt=texto, ln=True)
                                     else:
                                         pdf.cell(200, 8, txt="No hay examenes registrados para los usuarios seleccionados.", ln=True)
