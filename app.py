@@ -39,7 +39,7 @@ def inicializar_estado():
         'examen_guardado': False,
         'opciones_actuales': None,      
         'texto_correcta_actual': None,
-        'calif_minima_bd': 7.0 # Nuevo estado para guardar la memoria del config
+        'calif_minima_bd': 7.0 
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -100,9 +100,9 @@ def color_filas(row):
     estado = str(row.get('Estatus', row.get('Estado', ''))).strip()
     if estado == 'Finalizado':
         return ['background-color: #d4edda; color: #155724;'] * len(row)
-    elif estado == 'Sin Seguimiento (Alerta)':
+    elif estado in ['Sin Seguimiento (Alerta)', 'Cancelado']:
         return ['background-color: #f8d7da; color: #721c24;'] * len(row)
-    elif estado == 'Pendiente':
+    elif estado in ['Pendiente', 'Programado']:
         return ['background-color: #fff3cd; color: #856404;'] * len(row)
     return [''] * len(row)
 
@@ -281,7 +281,7 @@ if not st.session_state['logeado_staff'] and not st.session_state['logeado_dist'
 
 
 # ==========================================
-# MÓDULO EXCLUSIVO: PORTAL DE EXÁMENES (DISTRIBUIDORES)
+# MÓDULO EXCLUSIVO: PORTAL DE EXÁMENES
 # ==========================================
 if st.session_state['logeado_dist']:
     st.title("🎓 Portal de Evaluación y Capacitación")
@@ -294,9 +294,6 @@ if st.session_state['logeado_dist']:
         st.rerun()
     st.markdown("---")
 
-    # ==========================================
-    # OPTIMIZACIÓN: SOLO LEER API ANTES DE EMPEZAR EL EXAMEN
-    # ==========================================
     if not st.session_state['exam_in_progress']:
         TIEMPO_LIMITE_BD = 120
         CALIFICACION_MINIMA_BD = 7.0
@@ -312,7 +309,6 @@ if st.session_state['logeado_dist']:
                     CALIFICACION_MINIMA_BD = float(df_config_ex.at[idx_m, 'Valor'])
         except: pass
             
-        # Guardar en memoria para no volver a consultar la BD
         st.session_state['calif_minima_bd'] = CALIFICACION_MINIMA_BD
         tiempo_texto = f"{TIEMPO_LIMITE_BD // 60} minutos" if TIEMPO_LIMITE_BD % 60 == 0 else f"{TIEMPO_LIMITE_BD} segundos"
 
@@ -372,15 +368,14 @@ if st.session_state['logeado_dist']:
                             
                             if diff < timedelta(hours=24):
                                 if reintento_permitido:
-                                    st.success("✨ **¡Tienes autorización especial!** El administrador te ha otorgado un reintento inmediato. El bloqueo de 24 horas ha sido ignorado.")
+                                    st.success("✨ **¡Tienes autorización especial!** El bloqueo de 24 horas ha sido ignorado.")
                                 else:
                                     bloqueado_por_tiempo = True
                                     segs_restantes = timedelta(hours=24).total_seconds() - diff.total_seconds()
                                     horas = int(segs_restantes // 3600)
                                     minutos = int((segs_restantes % 3600) // 60)
                                     st.error(f"⏳ **Bloqueo de seguridad:** Obtuviste **{ultimo['Calificacion']}/10** en tu último intento. Podrás volver a presentar este examen en **{horas} horas y {minutos} minutos**.")
-            except Exception as e:
-                pass 
+            except: pass 
 
         if not bloqueado_por_tiempo:
             if st.button("🚀 Comenzar Examen", type="primary"):
@@ -401,23 +396,18 @@ if st.session_state['logeado_dist']:
                 st.session_state['preguntas_falladas'] = []
                 st.session_state['q_start_time'] = datetime.now()
                 st.session_state['examen_guardado'] = False 
-                
                 st.session_state['opciones_actuales'] = None
                 st.session_state['texto_correcta_actual'] = None
                 
                 df_preg_filtradas = df_banco[df_banco['Examen'] == examen_sel].copy()
                 st.session_state['df_examen_actual'] = df_preg_filtradas.sample(frac=1).reset_index(drop=True)
-                
                 st.session_state['tiempo_limite'] = TIEMPO_LIMITE_BD
                 st.rerun()
 
-    # ==========================================
-    # LÓGICA DURANTE Y AL FINAL DEL EXAMEN (CERO LLAMADAS A LA API HASTA GUARDAR)
-    # ==========================================
     else:
         df_examen_actual = st.session_state['df_examen_actual']
         TIEMPO_LIMITE = st.session_state['tiempo_limite']
-        CALIFICACION_MINIMA_BD = st.session_state.get('calif_minima_bd', 7.0) # Recuperar de memoria
+        CALIFICACION_MINIMA_BD = st.session_state.get('calif_minima_bd', 7.0)
         total_preguntas = len(df_examen_actual)
         q_idx = st.session_state['q_index']
 
@@ -443,7 +433,6 @@ if st.session_state['logeado_dist']:
                 texto_correcto_real = dict_opciones.get(letra_correcta_bd, "")
                 
                 random.shuffle(opciones_validas)
-                
                 st.session_state['opciones_actuales'] = opciones_validas
                 st.session_state['texto_correcta_actual'] = texto_correcto_real
 
@@ -475,7 +464,6 @@ if st.session_state['logeado_dist']:
                 st.session_state['q_start_time'] = datetime.now()
                 st.session_state['opciones_actuales'] = None
                 st.session_state['texto_correcta_actual'] = None
-                
                 st.rerun()
                 
         else:
@@ -501,7 +489,7 @@ if st.session_state['logeado_dist']:
                 cols_res = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Area_Mas_Debil", "Area_Mas_Fuerte", "Preguntas_Falladas", "Tiempo_Total", "Fecha"]
                 
                 nuevo_res = pd.DataFrame([{
-                    "ID_Resultado": 0, # Se actualizará en el loop
+                    "ID_Resultado": 0, 
                     "Usuario": st.session_state['usuario'],
                     "Examen": st.session_state['examen_actual'],
                     "Calificacion": calificacion_base10,
@@ -512,14 +500,12 @@ if st.session_state['logeado_dist']:
                     "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }])
                 
-                # --- SISTEMA DE ESPERA CON SPINNER VISUAL ---
                 max_reintentos = 5
                 exito_guardado = False
                 
                 with st.spinner("💾 Guardando tus resultados en la base de datos... Por favor, no cierres esta ventana."):
                     for intento in range(max_reintentos):
                         try:
-                            # La lectura y escritura debe ocurrir adentro del intento
                             df_resultados = conn_servicio.read(worksheet="Resultados_Examenes", ttl=0)
                             df_resultados = preparar_df(df_resultados, cols_res)
                             
@@ -529,10 +515,9 @@ if st.session_state['logeado_dist']:
                             conn_servicio.update(worksheet="Resultados_Examenes", data=pd.concat([df_resultados, nuevo_res], ignore_index=True))
                             st.session_state['examen_guardado'] = True
                             exito_guardado = True
-                            break # Salir del loop si funciona
+                            break 
                         except Exception as e:
                             if intento < max_reintentos - 1:
-                                # Pausa aleatoria para evitar choques simultáneos
                                 time.sleep(random.uniform(3.0, 7.0))
                             else:
                                 st.error(f"⚠️ Servidores de Google muy saturados. No pudimos guardar tu examen en este momento. Por favor, toma una captura de pantalla de esta página (Calificación: {calificacion_base10}/10) y avisa al administrador.")
@@ -572,7 +557,6 @@ if st.sidebar.button("Cerrar Sesión"):
 
 st.sidebar.markdown("---")
 
-# --- LÓGICA DE CONTROL DE ACCESOS POR ÁREA ---
 area_actual = st.session_state.get('area', '')
 opciones_menu = []
 
@@ -757,10 +741,8 @@ elif division == MENU_SERV:
                 
                 with st.form("nuevo_caso", clear_on_submit=True):
                     col_c1, col_c2 = st.columns(2)
-                    with col_c1:
-                        cliente = st.text_input("Cliente")
-                    with col_c2:
-                        pais = st.text_input("País")
+                    with col_c1: cliente = st.text_input("Cliente")
+                    with col_c2: pais = st.text_input("País")
                         
                     modelo_seleccionado = st.selectbox("Modelo del Equipo", LISTA_EQUIPOS)
                     modelo_otro = st.text_input("Especifica el modelo (Solo si elegiste 'Otro / Particular')")
@@ -828,8 +810,7 @@ elif division == MENU_SERV:
         if st.session_state.get('area') not in ['Invitado', 'Invitados']:
             st.write("### ⚙️ Gestionar Casos")
             col_sel, col_up, col_down, col_pend, col_fin, col_del = st.columns([2, 1, 1, 1.5, 1.5, 1])
-            with col_sel:
-                id_gestion = st.selectbox("Selecciona ID:", df_servicio['ID'].unique(), key="gest_serv")
+            with col_sel: id_gestion = st.selectbox("Selecciona ID:", df_servicio['ID'].unique(), key="gest_serv")
             with col_up:
                 st.write(""); st.write("")
                 if st.button("⬆️ Subir", key="up_s"):
@@ -885,7 +866,6 @@ elif division == MENU_MKT:
             df_marketing['Dias de licencia'] = df_marketing['Dias de licencia'].apply(limpiar_decimales)
 
     hubo_cambios_mkt = False
-    
     if not df_marketing.empty:
         for index, row in df_marketing.iterrows():
             if str(row['Estado']) != 'Finalizado':
@@ -989,11 +969,9 @@ elif division == MENU_MKT:
         
         if st.session_state.get('area') not in ['Invitado', 'Invitados']:
             st.write("### ⚙️ Gestionar Préstamos y Licencias")
-            
             col_sel_m, col_up_m, col_down_m, col_ren_lic, col_ren_dev, col_fin_m, col_del_m = st.columns([1.5, 0.5, 0.5, 1.5, 1.5, 1, 1])
             
-            with col_sel_m:
-                id_mkt = st.selectbox("Selecciona ID:", df_marketing['ID'].unique(), key="gest_mkt")
+            with col_sel_m: id_mkt = st.selectbox("Selecciona ID:", df_marketing['ID'].unique(), key="gest_mkt")
             with col_up_m:
                 st.write(""); st.write("")
                 if st.button("⬆️", key="up_m"):
@@ -1059,15 +1037,25 @@ elif division == MENU_MKT:
 elif division == MENU_EVE:
     st.header("📅 Calendario de Eventos")
     
-    cols_eve = ["ID", "Nombre del evento", "Tipo de evento", "Lugar del evento", "Distribuidor", "Fecha de inicio", "Fecha de termino", "KOL", "Responsable", "Creado por"]
+    cols_eve = ["ID", "Nombre del evento", "Tipo de evento", "Lugar del evento", "Distribuidor", "Fecha de inicio", "Fecha de termino", "KOL", "Responsable", "Estatus", "Creado por"]
     
     try:
         df_eventos = conn_marketing.read(worksheet="Eventos", ttl=15)
         df_eventos = preparar_df(df_eventos, cols_eve).fillna("")
+        
+        hubo_cambios_eve = False
+        if not df_eventos.empty:
+            for idx_ev, row_ev in df_eventos.iterrows():
+                if str(row_ev.get('Estatus', '')).strip() == "":
+                    df_eventos.at[idx_ev, 'Estatus'] = 'Programado'
+                    hubo_cambios_eve = True
+            if hubo_cambios_eve and st.session_state.get('area') not in ['Invitado', 'Invitados']:
+                conn_marketing.update(worksheet="Eventos", data=df_eventos)
+                
     except Exception as e:
         error_str = str(e)
         if "WorksheetNotFound" in error_str:
-            st.error("⚠️ Google Sheets dice que la pestaña no existe. Ve a tu Excel, haz doble clic en el nombre de la pestaña 'Eventos' y asegúrate de que no tenga un espacio en blanco al final o al inicio.")
+            st.error("⚠️ Google Sheets dice que la pestaña no existe. Verifica el nombre exacto de la pestaña 'Eventos'.")
         elif "429" in error_str or "Quota" in error_str:
             st.error("⚠️ Servidor de Google saturado por consultas continuas. Espera 1 minuto y recarga la página.")
         else:
@@ -1084,7 +1072,7 @@ elif division == MENU_EVE:
                 ev_tipo = st.selectbox("Tipo de evento", ["Workshop", "Congress", "Otro"])
                 ev_lugar = st.text_input("Lugar del evento (Ej. Hospital, Ciudad, Hotel)")
                 ev_dist = st.text_input("Distribuidor")
-                ev_kol = st.text_input("KOL (Opcional - Si asiste alguien especial)")
+                ev_kol = st.text_input("KOL (Opcional)")
                 ev_resp = st.text_input("Responsable de asistir")
                 
                 col1, col2 = st.columns(2)
@@ -1094,16 +1082,11 @@ elif division == MENU_EVE:
                 if st.form_submit_button("Guardar Evento"):
                     nuevo_id = int(df_eventos['ID'].max() + 1) if not df_eventos.empty else 1
                     nuevo_reg = pd.DataFrame([{
-                        "ID": nuevo_id, 
-                        "Nombre del evento": ev_nombre, 
-                        "Tipo de evento": ev_tipo,
-                        "Lugar del evento": str(ev_lugar).strip(),
-                        "Distribuidor": ev_dist, 
-                        "Fecha de inicio": str(ev_ini), 
-                        "Fecha de termino": str(ev_fin), 
-                        "KOL": str(ev_kol).strip(), 
-                        "Responsable": str(ev_resp).strip(),
-                        "Creado por": st.session_state['usuario']
+                        "ID": nuevo_id, "Nombre del evento": ev_nombre, "Tipo de evento": ev_tipo,
+                        "Lugar del evento": str(ev_lugar).strip(), "Distribuidor": ev_dist, 
+                        "Fecha de inicio": str(ev_ini), "Fecha de termino": str(ev_fin), 
+                        "KOL": str(ev_kol).strip(), "Responsable": str(ev_resp).strip(),
+                        "Estatus": "Programado", "Creado por": st.session_state['usuario']
                     }])
                     conn_marketing.update(worksheet="Eventos", data=pd.concat([df_eventos, nuevo_reg], ignore_index=True))
                     st.success("Evento registrado."); st.rerun()
@@ -1115,26 +1098,23 @@ elif division == MENU_EVE:
                     idx = df_eventos.index[df_eventos['ID'] == id_ed_e].tolist()[0]
                     with st.form("form_edit_e"):
                         nomb_ed = st.text_input("Nombre", value=df_eventos.at[idx, 'Nombre del evento'])
-                        
                         tipo_act = str(df_eventos.at[idx, 'Tipo de evento']).strip()
                         opc_tipos = ["Workshop", "Congress", "Otro"]
-                        idx_tipo = opc_tipos.index(tipo_act) if tipo_act in opc_tipos else 2
-                        tipo_ed = st.selectbox("Tipo de evento", opc_tipos, index=idx_tipo)
-                        
+                        tipo_ed = st.selectbox("Tipo de evento", opc_tipos, index=opc_tipos.index(tipo_act) if tipo_act in opc_tipos else 2)
                         lugar_ed = st.text_input("Lugar del evento", value=df_eventos.at[idx, 'Lugar del evento'])
                         dist_ed = st.text_input("Distribuidor", value=df_eventos.at[idx, 'Distribuidor'])
                         kol_ed = st.text_input("KOL", value=df_eventos.at[idx, 'KOL'])
                         resp_ed = st.text_input("Responsable", value=df_eventos.at[idx, 'Responsable'])
                         
+                        est_act_e = str(df_eventos.at[idx, 'Estatus']).strip()
+                        opc_est_e = ["Programado", "Finalizado", "Cancelado"]
+                        est_ed_e = st.selectbox("Estatus", opc_est_e, index=opc_est_e.index(est_act_e) if est_act_e in opc_est_e else 0)
+                        
                         if st.form_submit_button("Guardar Edición"):
                             cambios = []
                             campos_ver = [
-                                ('Nombre del evento', nomb_ed), 
-                                ('Tipo de evento', tipo_ed),
-                                ('Lugar del evento', lugar_ed),
-                                ('Distribuidor', dist_ed), 
-                                ('KOL', kol_ed),
-                                ('Responsable', resp_ed)
+                                ('Nombre del evento', nomb_ed), ('Tipo de evento', tipo_ed), ('Lugar del evento', lugar_ed),
+                                ('Distribuidor', dist_ed), ('KOL', kol_ed), ('Responsable', resp_ed), ('Estatus', est_ed_e)
                             ]
                             for col, nvo_val in campos_ver:
                                 ant_val = str(df_eventos.at[idx, col])
@@ -1149,25 +1129,17 @@ elif division == MENU_EVE:
 
     st.subheader("Eventos Programados")
     if not df_eventos.empty:
-        # --- BUSCADOR POR DISTRIBUIDOR ---
         st.write("### 🔍 Filtrar Eventos")
         distribuidores_unicos = ["Todos"] + sorted(list(set([str(d).strip() for d in df_eventos['Distribuidor'].unique() if str(d).strip() != ""])))
         filtro_dist = st.selectbox("Selecciona el Distribuidor a consultar:", distribuidores_unicos)
         
-        if filtro_dist != "Todos":
-            df_eventos_mostrar = df_eventos[df_eventos['Distribuidor'].str.strip() == filtro_dist]
-        else:
-            df_eventos_mostrar = df_eventos
-        
-        # Mostrar la tabla filtrada
-        st.dataframe(df_eventos_mostrar, use_container_width=True, hide_index=True)
+        df_eventos_mostrar = df_eventos if filtro_dist == "Todos" else df_eventos[df_eventos['Distribuidor'].str.strip() == filtro_dist]
+        st.dataframe(df_eventos_mostrar.style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
         if st.session_state.get('area') not in ['Invitado', 'Invitados']:
             st.write("### ⚙️ Gestionar Eventos")
-            # Usar df_eventos_mostrar para que el ID a borrar sea el que actualmente se está viendo
-            col_sel, col_up, col_dw, col_del = st.columns([2, 1, 1, 2])
-            with col_sel:
-                id_gest_e = st.selectbox("Selecciona ID:", df_eventos_mostrar['ID'].unique(), key="gest_eve")
+            col_sel, col_up, col_dw, col_fin, col_del = st.columns([2, 1, 1, 1.5, 1.5])
+            with col_sel: id_gest_e = st.selectbox("Selecciona ID:", df_eventos_mostrar['ID'].unique(), key="gest_eve")
             with col_up:
                 st.write(""); st.write("")
                 if st.button("⬆️", key="up_e"):
@@ -1178,6 +1150,16 @@ elif division == MENU_EVE:
                 if st.button("⬇️", key="dw_e"):
                     df_eventos = mover_fila(df_eventos, id_gest_e, 'down')
                     conn_marketing.update(worksheet="Eventos", data=df_eventos); st.rerun()
+            
+            with col_fin:
+                st.write(""); st.write("")
+                if st.button("✅ Finalizar"):
+                    idx_real = df_eventos.index[df_eventos['ID'] == id_gest_e].tolist()[0]
+                    registrar_auditoria([{'modulo':'Eventos', 'id':id_gest_e, 'campo':'Estatus', 'ant':df_eventos.at[idx_real, 'Estatus'], 'nvo':'Finalizado'}])
+                    df_eventos.at[idx_real, 'Estatus'] = 'Finalizado'
+                    conn_marketing.update(worksheet="Eventos", data=df_eventos)
+                    st.success("Evento marcado como Finalizado."); st.rerun()
+                    
             if st.session_state.get('area') == 'Admin':
                 with col_del:
                     st.write(""); st.write("")
@@ -1245,11 +1227,8 @@ elif division == MENU_INV:
                             e_sn = st.text_input("SN", value=df_nuevas.at[idx_n, 'SN'])
                             e_desc = st.text_area("Description", value=df_nuevas.at[idx_n, 'Description'])
                             
-                            try:
-                                val_date = str(df_nuevas.at[idx_n, 'Receive']).strip()
-                                e_rec = datetime.strptime(val_date, '%Y-%m-%d').date()
-                            except:
-                                e_rec = hoy
+                            try: e_rec = datetime.strptime(str(df_nuevas.at[idx_n, 'Receive']).strip(), '%Y-%m-%d').date()
+                            except: e_rec = hoy
                             
                             e_receive = st.date_input("Receive", value=e_rec)
                             e_status = st.text_input("Status", value=df_nuevas.at[idx_n, 'Status'])
@@ -1274,8 +1253,7 @@ elif division == MENU_INV:
                                     registrar_auditoria(cambios)
                                     conn_servicio.update(worksheet="Inv_Nuevas", data=df_nuevas)
                                     st.success("Cambios guardados."); st.rerun()
-                                else:
-                                    st.info("No se detectaron cambios.")
+                                else: st.info("No se detectaron cambios.")
                 
                 if st.session_state.get('area') == 'Admin':
                     id_borrar_n = st.selectbox("Selecciona ID a borrar (Nuevas):", df_nuevas['ID'].unique(), key="del_nv")
@@ -1340,8 +1318,7 @@ elif division == MENU_INV:
                             e_ou_sn = st.text_input("Origin Unit SN", value=df_danadas.at[idx_d, 'Origin Unit SN'])
                             
                             stat_act = str(df_danadas.at[idx_d, 'Status']).strip()
-                            idx_stat = LISTA_STATUS_DANADAS.index(stat_act) if stat_act in LISTA_STATUS_DANADAS else LISTA_STATUS_DANADAS.index("Otros")
-                            e_status_d = st.selectbox("Status", LISTA_STATUS_DANADAS, index=idx_stat)
+                            e_status_d = st.selectbox("Status", LISTA_STATUS_DANADAS, index=LISTA_STATUS_DANADAS.index(stat_act) if stat_act in LISTA_STATUS_DANADAS else LISTA_STATUS_DANADAS.index("Otros"))
                             e_status_d_otro = st.text_input("Especifica (Si elegiste Otros)", value=stat_act if stat_act not in LISTA_STATUS_DANADAS else "")
                             
                             e_cust = st.text_input("Customer", value=df_danadas.at[idx_d, 'Customer'])
@@ -1366,8 +1343,7 @@ elif division == MENU_INV:
                                     registrar_auditoria(cambios)
                                     conn_servicio.update(worksheet="Inv_Danadas", data=df_danadas)
                                     st.success("Cambios guardados."); st.rerun()
-                                else:
-                                    st.info("No se detectaron cambios.")
+                                else: st.info("No se detectaron cambios.")
                 
                 if st.session_state.get('area') == 'Admin':
                     id_borrar_d = st.selectbox("Selecciona ID a borrar (Dañadas):", df_danadas['ID'].unique(), key="del_da")
@@ -1398,8 +1374,7 @@ elif division == MENU_DEMO:
         df_mkt_actual = conn_marketing.read(ttl=0)
         df_mkt_actual = preparar_df(df_mkt_actual, ["Numero de serie", "Estado"]).fillna("")
         series_prestadas = df_mkt_actual[df_mkt_actual['Estado'] == 'Activo']["Numero de serie"].apply(limpiar_serie).tolist()
-    except:
-        pass
+    except: pass
 
     if not df_demo.empty:
         df_demo['Serie_Aux'] = df_demo['Serial Number'].apply(limpiar_serie)
@@ -1434,17 +1409,13 @@ elif division == MENU_DEMO:
                 d_ded_otro = st.text_input("Especifica Dedicated Unit (Si elegiste 'Otro / Particular')", key="ded_ins_o_d")
                 
                 if st.form_submit_button("Guardar Equipo Demo"):
-                    if d_serie.strip() == "":
-                        st.error("El Serial Number es obligatorio.")
+                    if d_serie.strip() == "": st.error("El Serial Number es obligatorio.")
                     else:
                         ded_final_d = d_ded_otro.strip() if d_ded_sel == "Otro / Particular" and d_ded_otro.strip() != "" else d_ded_sel
                         nuevo_id = int(df_demo['ID'].max() + 1) if not df_demo.empty else 1
                         nuevo_reg = pd.DataFrame([{
-                            "ID": nuevo_id, 
-                            "Model": str(d_modelo).strip(), 
-                            "Serial Number": str(d_serie).strip(), 
-                            "Dedicated Unit": ded_final_d,
-                            "Creado por": st.session_state['usuario']
+                            "ID": nuevo_id, "Model": str(d_modelo).strip(), "Serial Number": str(d_serie).strip(), 
+                            "Dedicated Unit": ded_final_d, "Creado por": st.session_state['usuario']
                         }])
                         conn_marketing.update(worksheet="Equipos_Demo", data=pd.concat([df_demo, nuevo_reg], ignore_index=True))
                         st.success("Equipo demo agregado al catálogo maestro."); st.rerun()
@@ -1454,21 +1425,14 @@ elif division == MENU_DEMO:
                 id_ed_demo = st.selectbox("Selecciona ID de Equipo Demo para modificar:", df_demo['ID'].unique(), key="sb_edit_demo")
                 if id_ed_demo:
                     idx_demo = df_demo.index[df_demo['ID'] == id_ed_demo].tolist()[0]
-                    
                     with st.form("form_edit_demo"):
                         e_mod_d = st.text_input("Model", value=df_demo.at[idx_demo, 'Model'])
                         e_ser_d = st.text_input("Serial Number", value=df_demo.at[idx_demo, 'Serial Number'])
-                        
                         ded_act = str(df_demo.at[idx_demo, 'Dedicated Unit']).strip()
-                        idx_ded = LISTA_EQUIPOS.index(ded_act) if ded_act in LISTA_EQUIPOS else LISTA_EQUIPOS.index("Otro / Particular")
-                        e_ded_sel = st.selectbox("Dedicated Unit", LISTA_EQUIPOS, index=idx_ded)
+                        e_ded_sel = st.selectbox("Dedicated Unit", LISTA_EQUIPOS, index=LISTA_EQUIPOS.index(ded_act) if ded_act in LISTA_EQUIPOS else LISTA_EQUIPOS.index("Otro / Particular"))
                         e_ded_otro = st.text_input("Especifica (Si elegiste Otro)", value=ded_act if ded_act not in LISTA_EQUIPOS else "")
                         
-                        col_sav_d, col_spc_d = st.columns([1, 4])
-                        with col_sav_d:
-                            save_btn = st.form_submit_button("💾 Guardar Cambios")
-                            
-                        if save_btn:
+                        if st.form_submit_button("💾 Guardar Cambios"):
                             ded_f_ed = e_ded_otro.strip() if e_ded_sel == "Otro / Particular" and e_ded_otro.strip() != "" else e_ded_sel
                             cambios = []
                             campos_ver = [('Model', str(e_mod_d).strip()), ('Serial Number', str(e_ser_d).strip()), ('Dedicated Unit', ded_f_ed)]
@@ -1482,16 +1446,14 @@ elif division == MENU_DEMO:
                                 registrar_auditoria(cambios)
                                 conn_marketing.update(worksheet="Equipos_Demo", data=df_demo)
                                 st.success("Equipo modificado."); st.rerun()
-                            else:
-                                st.info("Sin cambios detectados.")
+                            else: st.info("Sin cambios detectados.")
 
                     if st.session_state.get('area') == 'Admin':
                         st.write("⚠️ **Zona de peligro (Admin):**")
-                        if st.button("🗑️ Eliminar permanentemente de la Base de Datos"):
+                        if st.button("🗑️ Eliminar permanentemente de la Base Datos"):
                             eliminar_registro_gsheets(conn_marketing, df_demo, id_ed_demo, "Equipos_Demo")
-                            st.success("Equipo eliminado del inventario maestro."); st.rerun()
-            else:
-                st.info("No hay equipos registrados in la base de datos.")
+                            st.success("Equipo eliminado."); st.rerun()
+            else: st.info("No hay equipos registrados en la base de datos.")
 
 
 # ==========================================
@@ -1516,7 +1478,6 @@ elif division == MENU_CAPA:
             st.subheader("Contraseñas, Accesos y Bloqueos")
             try:
                 df_usr_ex = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15)
-                # Formateamos para asegurarnos que existan las nuevas columnas de bloqueo y reintento
                 df_usr_ex = preparar_df(df_usr_ex, COLS_USR_EXAM)
                 
                 if not df_usr_ex.empty:
@@ -1525,61 +1486,44 @@ elif division == MENU_CAPA:
                     if st.session_state.get('area') == 'Admin':
                         st.markdown("---")
                         st.write("### ⚙️ Gestionar Distribuidores Individuales")
-                        
                         usuario_a_gestionar = st.selectbox("Selecciona el Usuario a gestionar:", df_usr_ex['Usuario'].unique())
                         
                         if usuario_a_gestionar:
                             idx_usr = df_usr_ex.index[df_usr_ex['Usuario'] == usuario_a_gestionar].tolist()[0]
-                            
                             tab_editar_usr, tab_borrar_usr = st.tabs(["✏️ Editar Accesos y Permisos", "🗑️ Eliminar Usuario"])
                             
                             with tab_editar_usr:
                                 with st.form("form_edit_distribuidor"):
                                     e_pass = st.text_input("Contraseña", value=df_usr_ex.at[idx_usr, 'Password'])
                                     e_dist = st.text_input("Distribuidor/Empresa", value=df_usr_ex.at[idx_usr, 'Distribuidor'])
-                                    
-                                    # --- SE AGREGA EL CAMPO PAÍS EN EL EDITOR ---
                                     e_pais = st.text_input("País", value=df_usr_ex.at[idx_usr, 'País'] if 'País' in df_usr_ex.columns else "")
                                     
                                     st.write("#### 🛡️ Control de Exámenes")
-                                    val_bloqueado = str(df_usr_ex.at[idx_usr, 'Bloqueado_Manual']).strip().upper() == 'SI'
-                                    e_bloqueado = st.checkbox("⛔ Bloquear acceso a exámenes (Bloqueo Manual del Sistema)", value=val_bloqueado)
-                                    
-                                    val_reintento = str(df_usr_ex.at[idx_usr, 'Reintento_Permitido']).strip().upper() == 'SI'
-                                    e_reintento = st.checkbox("🔄 Habilitar reintento inmediato (Ignorar el castigo de 24 hrs por reprobar)", value=val_reintento)
+                                    e_bloqueado = st.checkbox("⛔ Bloquear acceso a exámenes", value=str(df_usr_ex.at[idx_usr, 'Bloqueado_Manual']).strip().upper() == 'SI')
+                                    e_reintento = st.checkbox("🔄 Habilitar reintento inmediato (Ignorar 24 hrs)", value=str(df_usr_ex.at[idx_usr, 'Reintento_Permitido']).strip().upper() == 'SI')
                                     
                                     if st.form_submit_button("💾 Guardar Cambios"):
                                         df_usr_ex.at[idx_usr, 'Password'] = str(e_pass).strip()
                                         df_usr_ex.at[idx_usr, 'Distribuidor'] = str(e_dist).strip().upper()
-                                        # --- SE GUARDA EN MAYÚSCULAS ---
                                         df_usr_ex.at[idx_usr, 'País'] = str(e_pais).strip().upper()
-                                        
                                         df_usr_ex.at[idx_usr, 'Bloqueado_Manual'] = 'SI' if e_bloqueado else 'NO'
                                         df_usr_ex.at[idx_usr, 'Reintento_Permitido'] = 'SI' if e_reintento else 'NO'
                                         
                                         conn_servicio.update(worksheet="Usuarios_Examenes", data=df_usr_ex)
-                                        st.success(f"Permisos de {usuario_a_gestionar} actualizados exitosamente.")
-                                        st.rerun()
+                                        st.success("Permisos actualizados."); st.rerun()
                                         
                             with tab_borrar_usr:
-                                st.warning(f"¿Estás seguro de que deseas eliminar al usuario **{usuario_a_gestionar}**? Esta acción no se puede deshacer.")
+                                st.warning(f"¿Estás seguro de que deseas eliminar al usuario **{usuario_a_gestionar}**?")
                                 if st.button("🚨 Sí, eliminar usuario"):
                                     df_nuevo_usr = df_usr_ex.drop(idx_usr).reset_index(drop=True)
                                     diferencia = len(df_usr_ex) - len(df_nuevo_usr)
-                                    
                                     if diferencia > 0:
                                         filas_vacias = pd.DataFrame([[""] * len(df_usr_ex.columns)] * diferencia, columns=df_usr_ex.columns)
-                                        df_escritura = pd.concat([df_nuevo_usr, filas_vacias], ignore_index=True)
-                                        conn_servicio.update(worksheet="Usuarios_Examenes", data=df_escritura)
-                                    else:
-                                        conn_servicio.update(worksheet="Usuarios_Examenes", data=df_nuevo_usr)
-                                        
-                                    st.success("Usuario eliminado correctamente.")
-                                    st.rerun()
-                else:
-                    st.info("Aún no hay distribuidores registrados.")
-            except Exception as e:
-                st.info(f"La pestaña 'Usuarios_Examenes' aún no existe en Google Sheets o hay un error. (Detalle: {e})")
+                                        conn_servicio.update(worksheet="Usuarios_Examenes", data=pd.concat([df_nuevo_usr, filas_vacias], ignore_index=True))
+                                    else: conn_servicio.update(worksheet="Usuarios_Examenes", data=df_nuevo_usr)
+                                    st.success("Usuario eliminado."); st.rerun()
+                else: st.info("Aún no hay distribuidores registrados.")
+            except: pass
             
     with tab_res:
         st.subheader("Desempeño Global")
@@ -1587,7 +1531,6 @@ elif division == MENU_CAPA:
             df_res_ex = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
             if not df_res_ex.empty:
                 st.dataframe(df_res_ex, use_container_width=True, hide_index=True)
-                
                 st.markdown("### 🔍 Análisis Automático")
                 col_a1, col_a2 = st.columns(2)
                 
@@ -1600,20 +1543,11 @@ elif division == MENU_CAPA:
                     lista_ids = []
                     for f in todas_las_fallas:
                         if f != "Ninguna":
-                            if " | " in f:
-                                items = f.split(" | ")
-                            else:
-                                items = f.split(",")
-                                
+                            items = f.split(" | ") if " | " in f else f.split(",")
                             for item in items:
                                 item = item.strip()
                                 if not item: continue
-                                
-                                if ":" in item and "(Eligió:" in item:
-                                    q_id = item.split(":")[0].strip()
-                                    lista_ids.append(q_id)
-                                else:
-                                    lista_ids.append(item)
+                                lista_ids.append(item.split(":")[0].strip() if ":" in item and "(Eligió:" in item else item)
                                     
                     pregunta_peor = collections.Counter(lista_ids).most_common(1)[0][0] if lista_ids else "Ninguna"
                     st.metric("ID Pregunta Más Fallada", str(pregunta_peor))
@@ -1630,89 +1564,55 @@ elif division == MENU_CAPA:
 
                     if lista_distribuidores:
                         distribuidor_selec = st.selectbox("1. Selecciona el Distribuidor/Empresa:", ["(Selecciona un Distribuidor)"] + lista_distribuidores)
-                        
                         if distribuidor_selec != "(Selecciona un Distribuidor)":
                             usuarios_del_dist = df_usr_temp[df_usr_temp['Distribuidor'] == distribuidor_selec]['Usuario'].unique().tolist()
+                            usuarios_selec = st.multiselect("2. Selecciona los usuarios:", options=usuarios_del_dist, default=usuarios_del_dist)
                             
-                            st.write("2. Selecciona los usuarios a incluir:")
-                            usuarios_selec = st.multiselect(
-                                "Deja todos marcados para un reporte completo, o quita nombres para un reporte específico.",
-                                options=usuarios_del_dist, 
-                                default=usuarios_del_dist
-                            )
-                            
-                            if not usuarios_selec:
-                                st.warning("⚠️ Debes seleccionar al menos un usuario para generar el reporte.")
+                            if not usuarios_selec: st.warning("⚠️ Selecciona al menos un usuario.")
                             else:
                                 try:
                                     pdf = FPDF()
                                     pdf.add_page()
                                     pdf.set_font("Arial", 'B', 16)
                                     pdf.cell(200, 10, txt="Reporte de Capacitacion de Distribuidores", ln=True, align='C')
-                                    
                                     pdf.set_font("Arial", '', 12)
                                     pdf.ln(10)
                                     
-                                    def limpiar_texto(texto):
-                                        return str(texto).encode('latin-1', 'replace').decode('latin-1')
+                                    def limpiar_texto(texto): return str(texto).encode('latin-1', 'replace').decode('latin-1')
 
-                                    # --- CALCULAR PROMEDIO GLOBAL DEL DISTRIBUIDOR ---
                                     try:
                                         res_dist = df_res_ex[df_res_ex['Usuario'].isin(usuarios_del_dist)].copy()
-                                        if not res_dist.empty:
-                                            promedio_dist = res_dist['Calificacion'].astype(float).mean()
-                                        else:
-                                            promedio_dist = 0.0
-                                    except:
-                                        promedio_dist = 0.0
+                                        promedio_dist = res_dist['Calificacion'].astype(float).mean() if not res_dist.empty else 0.0
+                                    except: promedio_dist = 0.0
 
                                     pdf.cell(200, 10, txt=f"Empresa/Distribuidor: {limpiar_texto(distribuidor_selec)}", ln=True)
                                     pdf.cell(200, 10, txt=f"Fecha de Reporte: {hoy}", ln=True)
-                                    # --- SE IMPRIME EL PROMEDIO EN EL PDF ---
                                     pdf.cell(200, 10, txt=f"Calificacion Promedio Global: {promedio_dist:.1f}/10", ln=True)
                                     pdf.ln(10)
                                     
                                     pdf.set_font("Arial", 'B', 12)
                                     pdf.cell(200, 10, txt="Resultados de Evaluaciones (Usuarios Seleccionados):", ln=True)
-                                    
                                     pdf.set_font("Arial", '', 10)
                                     
                                     resultados_filtro = df_res_ex[df_res_ex['Usuario'].isin(usuarios_selec)]
-                                    
                                     if not resultados_filtro.empty:
                                         for _, row in resultados_filtro.iterrows():
                                             usr_limpio = limpiar_texto(row['Usuario'])
                                             ex_limpio = limpiar_texto(row['Examen'])
                                             area_limpia = limpiar_texto(row['Area_Mas_Debil'])
                                             tiempo_fila = row['Tiempo_Total'] if 'Tiempo_Total' in row and pd.notna(row['Tiempo_Total']) else "N/A"
-                                            
-                                            texto = f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {row['Calificacion']}/10 | Duracion: {tiempo_fila}"
-                                            pdf.cell(200, 8, txt=texto, ln=True)
-                                    else:
-                                        pdf.cell(200, 8, txt="No hay examenes registrados para los usuarios seleccionados.", ln=True)
+                                            pdf.cell(200, 8, txt=f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {row['Calificacion']}/10 | Duracion: {tiempo_fila} | Falla en: {area_limpia}", ln=True)
+                                    else: pdf.cell(200, 8, txt="No hay examenes registrados para los usuarios seleccionados.", ln=True)
                                         
                                     pdf_output = pdf.output(dest="S").encode("latin-1")
-                                    
-                                    st.download_button(
-                                        label="📄 Descargar PDF de Desempeño",
-                                        data=pdf_output,
-                                        file_name=f"Reporte_{limpiar_texto(distribuidor_selec)}_{hoy}.pdf",
-                                        mime="application/pdf",
-                                        type="primary"
-                                    )
-                                except Exception as e:
-                                    st.error(f"Error interno al generar el PDF: {e}")
-                    else:
-                        st.info("No hay distribuidores registrados para generar reportes.")
-                else:
-                    st.warning("⚠️ **Librería FPDF no detectada.** Para habilitar los reportes PDF instala la dependencia fpdf.")
-            else:
-                st.info("Aún no hay resultados de exámenes registrados.")
+                                    st.download_button(label="📄 Descargar PDF de Desempeño", data=pdf_output, file_name=f"Reporte_{limpiar_texto(distribuidor_selec)}_{hoy}.pdf", mime="application/pdf", type="primary")
+                                except Exception as e: st.error(f"Error al generar el PDF: {e}")
+                    else: st.info("No hay distribuidores registrados.")
+                else: st.warning("⚠️ Librería FPDF no detectada.")
+            else: st.info("Aún no hay resultados de exámenes registrados.")
         except Exception as e:
-            if "WorksheetNotFound" in str(e):
-                st.info("La pestaña 'Resultados_Examenes' aún no existe en Google Sheets.")
-            else:
-                st.error(f"⚠️ Servidor saturado por consultas rápidas. Espera 1 minuto y recarga la página. Detalle técnico: {e}")
+            if "WorksheetNotFound" in str(e): st.info("La pestaña 'Resultados_Examenes' no existe.")
+            else: st.error(f"⚠️ Servidor saturado. Espera 1 minuto. Detalle: {e}")
             
     if tab_conf is not None:
         with tab_conf:
@@ -1720,54 +1620,31 @@ elif division == MENU_CAPA:
             try:
                 df_config = conn_servicio.read(worksheet="Configuracion", ttl=15)
                 df_config = preparar_df(df_config, ["Parametro", "Valor"]).fillna("")
-            except:
-                df_config = pd.DataFrame(columns=["Parametro", "Valor"])
+            except: df_config = pd.DataFrame(columns=["Parametro", "Valor"])
 
-            # Extraer tiempo
-            if not df_config.empty and "Tiempo_Pregunta_Segundos" in df_config['Parametro'].values:
-                try:
-                    val_t = df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'].iloc[0]
-                    tiempo_actual = int(float(val_t))
-                except:
-                    tiempo_actual = 120 
-            else:
-                tiempo_actual = 120 
+            try: tiempo_actual = int(float(df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'].iloc[0]))
+            except: tiempo_actual = 120 
 
-            # Extraer calificación mínima
-            if not df_config.empty and "Calificacion_Minima" in df_config['Parametro'].values:
-                try:
-                    val_c = df_config.loc[df_config['Parametro'] == "Calificacion_Minima", 'Valor'].iloc[0]
-                    calif_actual = float(val_c)
-                except:
-                    calif_actual = 7.0
-            else:
-                calif_actual = 7.0
+            try: calif_actual = float(df_config.loc[df_config['Parametro'] == "Calificacion_Minima", 'Valor'].iloc[0])
+            except: calif_actual = 7.0
                 
             with st.form("form_config_exam"):
                 nvo_tiempo = st.number_input("⏱️ Tiempo máximo por pregunta (en segundos):", min_value=10, max_value=600, value=tiempo_actual, step=10)
-                st.caption("Ejemplo: 60 = 1 minuto | 120 = 2 minutos | 180 = 3 minutos")
-                
                 nva_calif = st.number_input("🎯 Calificación mínima para aprobar (Ej. 7.0):", min_value=0.0, max_value=10.0, value=calif_actual, step=0.1)
                 
                 if st.form_submit_button("💾 Guardar Configuración"):
-                    if not df_config.empty and 'Valor' in df_config.columns:
-                        df_config['Valor'] = df_config['Valor'].astype(str)
+                    if not df_config.empty and 'Valor' in df_config.columns: df_config['Valor'] = df_config['Valor'].astype(str)
 
-                    # Actualizar Tiempo
                     if df_config.empty or "Tiempo_Pregunta_Segundos" not in df_config['Parametro'].values:
                         df_config = pd.concat([df_config, pd.DataFrame([{"Parametro": "Tiempo_Pregunta_Segundos", "Valor": str(nvo_tiempo)}])], ignore_index=True)
-                    else:
-                        df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'] = str(nvo_tiempo)
+                    else: df_config.loc[df_config['Parametro'] == "Tiempo_Pregunta_Segundos", 'Valor'] = str(nvo_tiempo)
 
-                    # Actualizar Calificación Mínima
                     if "Calificacion_Minima" not in df_config['Parametro'].values:
                         df_config = pd.concat([df_config, pd.DataFrame([{"Parametro": "Calificacion_Minima", "Valor": str(nva_calif)}])], ignore_index=True)
-                    else:
-                        df_config.loc[df_config['Parametro'] == "Calificacion_Minima", 'Valor'] = str(nva_calif)
+                    else: df_config.loc[df_config['Parametro'] == "Calificacion_Minima", 'Valor'] = str(nva_calif)
                     
                     conn_servicio.update(worksheet="Configuracion", data=df_config)
-                    st.success("Configuraciones del sistema actualizadas correctamente.")
-                    st.rerun()
+                    st.success("Configuraciones actualizadas correctamente."); st.rerun()
 
 
 # ==========================================
@@ -1775,11 +1652,8 @@ elif division == MENU_CAPA:
 # ==========================================
 elif division == MENU_USR:
     st.header("Gestión de Usuarios del CRM (Staff)")
-    
     df_usuarios = conn_servicio.read(worksheet="Usuarios", ttl=0).dropna(how='all')
-    
-    if 'Area' not in df_usuarios.columns:
-        df_usuarios['Area'] = "No asignada"
+    if 'Area' not in df_usuarios.columns: df_usuarios['Area'] = "No asignada"
         
     st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
     
@@ -1792,24 +1666,17 @@ elif division == MENU_USR:
             if st.form_submit_button("Crear Usuario"):
                 if nuevo_user and nuevo_pass:
                     fila_user = pd.DataFrame([{
-                        "Usuario": str(nuevo_user).strip(), 
-                        "Password": str(nuevo_pass).strip(), 
-                        "Rol": str(nuevo_area).strip(), 
-                        "Area": str(nuevo_area).strip(),
-                        "Ultimo Acceso": ""
+                        "Usuario": str(nuevo_user).strip(), "Password": str(nuevo_pass).strip(), 
+                        "Rol": str(nuevo_area).strip(), "Area": str(nuevo_area).strip(), "Ultimo Acceso": ""
                     }])
                     conn_servicio.update(worksheet="Usuarios", data=pd.concat([df_usuarios, fila_user], ignore_index=True))
-                    st.success(f"Usuario '{nuevo_user}' creado exitosamente en el área de {nuevo_area}."); st.rerun()
-                else:
-                    st.error("Por favor, llena todos los campos.")
+                    st.success(f"Usuario '{nuevo_user}' creado exitosamente."); st.rerun()
+                else: st.error("Por favor, llena todos los campos.")
                     
     st.markdown("---")
     st.subheader("🕵️‍♂️ Registro de Auditoría (Cambios realizados)")
     try:
         df_auditoria = conn_servicio.read(worksheet="Auditoria", ttl=0).dropna(how='all')
-        if not df_auditoria.empty:
-            st.dataframe(df_auditoria, use_container_width=True, hide_index=True)
-        else:
-            st.info("Aún no hay registros de cambios.")
-    except:
-        st.info("La tabla de Auditoria aún no se ha creado o está vacía.")
+        if not df_auditoria.empty: st.dataframe(df_auditoria, use_container_width=True, hide_index=True)
+        else: st.info("Aún no hay registros de cambios.")
+    except: st.info("La tabla de Auditoria aún no se ha creado o está vacía.")
