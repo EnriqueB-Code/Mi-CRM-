@@ -1531,27 +1531,40 @@ elif division == MENU_CAPA:
             df_res_ex = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
             if not df_res_ex.empty:
                 st.dataframe(df_res_ex, use_container_width=True, hide_index=True)
-                st.markdown("### 🔍 Análisis Automático")
-                col_a1, col_a2 = st.columns(2)
+st.markdown("### 🔍 Análisis Automático")
+                col_a1, col_a2, col_a3 = st.columns(3) # Cambiamos a 3 columnas
+                
+                # --- Procesamiento de fallas y tiempo agotado ---
+                todas_las_fallas = df_res_ex['Preguntas_Falladas'].dropna().astype(str).tolist()
+                lista_ids = []
+                conteo_tiempo_agotado = 0
+                
+                for f in todas_las_fallas:
+                    if f != "Ninguna":
+                        items = f.split(" | ") if " | " in f else f.split(",")
+                        for item in items:
+                            item = item.strip()
+                            if not item: continue
+                            
+                            # Contamos si la causa fue que se acabó el tiempo
+                            if "Tiempo Agotado" in item:
+                                conteo_tiempo_agotado += 1
+                                
+                            # Extraemos el ID de la pregunta para ver cuál es la más fallada
+                            lista_ids.append(item.split(":")[0].strip() if ":" in item and "(Eligió:" in item else item)
                 
                 with col_a1:
                     area_debil_comun = df_res_ex['Area_Mas_Debil'].mode()[0] if not df_res_ex['Area_Mas_Debil'].empty else "N/A"
                     st.metric("Área General Más Reprobada", str(area_debil_comun))
                     
                 with col_a2:
-                    todas_las_fallas = df_res_ex['Preguntas_Falladas'].dropna().astype(str).tolist()
-                    lista_ids = []
-                    for f in todas_las_fallas:
-                        if f != "Ninguna":
-                            items = f.split(" | ") if " | " in f else f.split(",")
-                            for item in items:
-                                item = item.strip()
-                                if not item: continue
-                                lista_ids.append(item.split(":")[0].strip() if ":" in item and "(Eligió:" in item else item)
-                                    
                     pregunta_peor = collections.Counter(lista_ids).most_common(1)[0][0] if lista_ids else "Ninguna"
                     st.metric("ID Pregunta Más Fallada", str(pregunta_peor))
                     
+                with col_a3:
+                    st.metric("⏳ Respuestas por Tiempo Agotado", str(conteo_tiempo_agotado))
+                    
+                st.markdown("---")                    
                 st.markdown("---")
                 st.write("### 📄 Generador de Reportes PDF (Filtro Avanzado)")
                 if HAS_FPDF:
