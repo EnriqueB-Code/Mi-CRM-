@@ -1531,7 +1531,7 @@ elif division == MENU_CAPA:
             df_res_ex = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
             if not df_res_ex.empty:
                 st.dataframe(df_res_ex, use_container_width=True, hide_index=True)
-st.markdown("### 🔍 Análisis Automático")
+                st.markdown("### 🔍 Análisis Automático")
                 col_a1, col_a2, col_a3 = st.columns(3) # Cambiamos a 3 columnas
                 
                 # --- Procesamiento de fallas y tiempo agotado ---
