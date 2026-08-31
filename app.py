@@ -64,6 +64,7 @@ LISTA_EQUIPOS = [
     "EBit20", "EBit30", "EBit50", "EBit60", 
     "SonoAir20", "SonoAir30", "SonoAir60", "SonoAir70", 
     "SonoBook6", "SonoBook7", "SonoBook8", "SonoBook9", 
+    "SonoGo80", "SonoGo90",
     "QBit3", "QBit5", "QBit7", "QBit9", 
     "CBit4", "CBit6", "CBit8", "CBit9", "CBit10", 
     "SonoPort8", "XBit80", "Xbit90", "SonoMax7", "SonoMax9", 
