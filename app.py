@@ -1530,7 +1530,44 @@ elif division == MENU_CAPA:
         try:
             df_res_ex = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
             if not df_res_ex.empty:
-                st.dataframe(df_res_ex, use_container_width=True, hide_index=True)
+                
+                # --- PREPARACIÓN DE LA TABLA DE VISUALIZACIÓN ---
+                df_display = df_res_ex.copy()
+                df_temp = df_res_ex.copy()
+                df_temp['Calificacion_Num'] = pd.to_numeric(df_temp['Calificacion'], errors='coerce')
+                
+                dict_min = {}
+                dict_max = {}
+                
+                for usr, group in df_temp.groupby('Usuario'):
+                    # Encontrar el índice de la calificación mínima y máxima para cada usuario
+                    idx_min = group['Calificacion_Num'].idxmin()
+                    idx_max = group['Calificacion_Num'].idxmax()
+                    
+                    if pd.notna(idx_min):
+                        min_row = group.loc[idx_min]
+                        dict_min[usr] = f"{min_row['Examen']} ({min_row['Calificacion']})"
+                    
+                    if pd.notna(idx_max):
+                        max_row = group.loc[idx_max]
+                        dict_max[usr] = f"{max_row['Examen']} ({max_row['Calificacion']})"
+                        
+                # Aplicar los valores calculados a las nuevas columnas
+                df_display['Examen más débil'] = df_display['Usuario'].map(dict_min)
+                df_display['Examen más fuerte'] = df_display['Usuario'].map(dict_max)
+                
+                # Quitar las columnas antiguas de la vista para mantener todo limpio
+                df_display = df_display.drop(columns=['Area_Mas_Debil', 'Area_Mas_Fuerte'], errors='ignore')
+                
+                # Reordenar las columnas en el orden perfecto
+                orden_deseado = ["ID_Resultado", "Usuario", "Examen", "Calificacion", "Examen más débil", "Examen más fuerte", "Preguntas_Falladas", "Tiempo_Total", "Fecha"]
+                columnas_finales = [c for c in orden_deseado if c in df_display.columns]
+                columnas_finales += [c for c in df_display.columns if c not in columnas_finales]
+                
+                df_display = df_display[columnas_finales]
+                
+                # Mostrar la tabla formateada
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
                 
                 st.markdown("### 🔍 Análisis Automático")
                 col_a1, col_a2, col_a3 = st.columns(3) 
