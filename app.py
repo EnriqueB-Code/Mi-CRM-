@@ -64,7 +64,6 @@ LISTA_EQUIPOS = [
     "EBit20", "EBit30", "EBit50", "EBit60", 
     "SonoAir20", "SonoAir30", "SonoAir60", "SonoAir70", 
     "SonoBook6", "SonoBook7", "SonoBook8", "SonoBook9", 
-    "SonoGo80", "SonoGo90",
     "QBit3", "QBit5", "QBit7", "QBit9", 
     "CBit4", "CBit6", "CBit8", "CBit9", "CBit10", 
     "SonoPort8", "XBit80", "Xbit90", "SonoMax7", "SonoMax9", 
@@ -1532,8 +1531,9 @@ elif division == MENU_CAPA:
             df_res_ex = conn_servicio.read(worksheet="Resultados_Examenes", ttl=15).dropna(how='all')
             if not df_res_ex.empty:
                 st.dataframe(df_res_ex, use_container_width=True, hide_index=True)
+                
                 st.markdown("### 🔍 Análisis Automático")
-                col_a1, col_a2, col_a3 = st.columns(3) # Cambiamos a 3 columnas
+                col_a1, col_a2, col_a3 = st.columns(3) 
                 
                 # --- Procesamiento de fallas y tiempo agotado ---
                 todas_las_fallas = df_res_ex['Preguntas_Falladas'].dropna().astype(str).tolist()
@@ -1565,9 +1565,10 @@ elif division == MENU_CAPA:
                 with col_a3:
                     st.metric("⏳ Respuestas por Tiempo Agotado", str(conteo_tiempo_agotado))
                     
-                st.markdown("---")                    
                 st.markdown("---")
-                st.write("### 📄 Generador de Reportes PDF (Filtro Avanzado)")
+                
+                # --- GENERADOR DE PDF AVANZADO ---
+                st.write("### 📄 Generador de Reportes PDF Avanzado")
                 if HAS_FPDF:
                     try: 
                         df_usr_temp = conn_servicio.read(worksheet="Usuarios_Examenes", ttl=15).dropna(how='all')
@@ -1582,48 +1583,92 @@ elif division == MENU_CAPA:
                             usuarios_del_dist = df_usr_temp[df_usr_temp['Distribuidor'] == distribuidor_selec]['Usuario'].unique().tolist()
                             usuarios_selec = st.multiselect("2. Selecciona los usuarios:", options=usuarios_del_dist, default=usuarios_del_dist)
                             
-                            if not usuarios_selec: st.warning("⚠️ Selecciona al menos un usuario.")
+                            if not usuarios_selec: 
+                                st.warning("⚠️ Selecciona al menos un usuario.")
                             else:
-                                try:
-                                    pdf = FPDF()
-                                    pdf.add_page()
-                                    pdf.set_font("Arial", 'B', 16)
-                                    pdf.cell(200, 10, txt="Reporte de Capacitacion de Distribuidores", ln=True, align='C')
-                                    pdf.set_font("Arial", '', 12)
-                                    pdf.ln(10)
-                                    
-                                    def limpiar_texto(texto): return str(texto).encode('latin-1', 'replace').decode('latin-1')
+                                res_usuarios = df_res_ex[df_res_ex['Usuario'].isin(usuarios_selec)]
+                                lista_examenes = res_usuarios['Examen'].unique().tolist() if not res_usuarios.empty else []
+                                
+                                # NUEVO PASO: Seleccionar el examen específico
+                                examen_selec = st.selectbox("3. Selecciona el examen a reportar:", ["Todos"] + lista_examenes)
+                                
+                                resultados_filtro = res_usuarios.copy()
+                                if examen_selec != "Todos":
+                                    resultados_filtro = resultados_filtro[resultados_filtro['Examen'] == examen_selec]
 
+                                if not resultados_filtro.empty:
                                     try:
-                                        res_dist = df_res_ex[df_res_ex['Usuario'].isin(usuarios_del_dist)].copy()
-                                        promedio_dist = res_dist['Calificacion'].astype(float).mean() if not res_dist.empty else 0.0
-                                    except: promedio_dist = 0.0
+                                        pdf = FPDF()
+                                        pdf.add_page()
+                                        pdf.set_font("Arial", 'B', 16)
+                                        pdf.cell(0, 10, txt="Reporte de Capacitacion de Distribuidores", ln=True, align='C')
+                                        pdf.set_font("Arial", '', 12)
+                                        pdf.ln(5)
+                                        
+                                        def limpiar_texto(texto): 
+                                            return str(texto).encode('latin-1', 'replace').decode('latin-1')
 
-                                    pdf.cell(200, 10, txt=f"Empresa/Distribuidor: {limpiar_texto(distribuidor_selec)}", ln=True)
-                                    pdf.cell(200, 10, txt=f"Fecha de Reporte: {hoy}", ln=True)
-                                    pdf.cell(200, 10, txt=f"Calificacion Promedio Global: {promedio_dist:.1f}/10", ln=True)
-                                    pdf.ln(10)
-                                    
-                                    pdf.set_font("Arial", 'B', 12)
-                                    pdf.cell(200, 10, txt="Resultados de Evaluaciones (Usuarios Seleccionados):", ln=True)
-                                    pdf.set_font("Arial", '', 10)
-                                    
-                                    resultados_filtro = df_res_ex[df_res_ex['Usuario'].isin(usuarios_selec)]
-                                    if not resultados_filtro.empty:
+                                        promedio_dist = resultados_filtro['Calificacion'].astype(float).mean()
+
+                                        pdf.cell(0, 8, txt=f"Empresa/Distribuidor: {limpiar_texto(distribuidor_selec)}", ln=True)
+                                        pdf.cell(0, 8, txt=f"Examen Reportado: {limpiar_texto(examen_selec)}", ln=True)
+                                        pdf.cell(0, 8, txt=f"Calificacion Promedio del Grupo: {promedio_dist:.1f}/10", ln=True)
+                                        pdf.cell(0, 8, txt=f"Fecha de Reporte: {hoy}", ln=True)
+                                        pdf.ln(5)
+                                        
+                                        # --- EXTRACCIÓN DE PREGUNTAS MÁS FALLADAS PARA ESTE REPORTE ---
+                                        fallas_filtro = resultados_filtro['Preguntas_Falladas'].dropna().astype(str).tolist()
+                                        ids_fallados = []
+                                        for f in fallas_filtro:
+                                            if f != "Ninguna":
+                                                items = f.split(" | ") if " | " in f else f.split(",")
+                                                for item in items:
+                                                    item = item.strip()
+                                                    if not item: continue
+                                                    # Sacamos solo el texto de la pregunta quitando lo que eligió el usuario
+                                                    pregunta_texto = item.split("(Eligió:")[0].strip() if "(Eligió:" in item else item
+                                                    ids_fallados.append(pregunta_texto)
+                                                    
+                                        conteo_fallas = collections.Counter(ids_fallados).most_common(5) # Top 5
+                                        
+                                        pdf.set_font("Arial", 'B', 12)
+                                        pdf.cell(0, 10, txt="Preguntas Mas Falladas en este grupo (Top 5):", ln=True)
+                                        pdf.set_font("Arial", '', 10)
+                                        
+                                        if conteo_fallas:
+                                            for preg, freq in conteo_fallas:
+                                                # Usamos multi_cell para que si la pregunta es muy larga, baje al siguiente renglón automáticamente
+                                                pdf.multi_cell(0, 6, txt=f"- Fallada {freq} veces: {limpiar_texto(preg)}")
+                                        else:
+                                            pdf.cell(0, 8, txt="- Excelente: Ninguna pregunta fue fallada o todos aprobaron perfecto.", ln=True)
+                                            
+                                        pdf.ln(5)
+                                        
+                                        # --- RESULTADOS INDIVIDUALES ---
+                                        pdf.set_font("Arial", 'B', 12)
+                                        pdf.cell(0, 10, txt="Resultados Individuales:", ln=True)
+                                        pdf.set_font("Arial", '', 10)
+                                        
                                         for _, row in resultados_filtro.iterrows():
                                             usr_limpio = limpiar_texto(row['Usuario'])
                                             ex_limpio = limpiar_texto(row['Examen'])
                                             area_limpia = limpiar_texto(row['Area_Mas_Debil'])
-                                            tiempo_fila = row['Tiempo_Total'] if 'Tiempo_Total' in row and pd.notna(row['Tiempo_Total']) else "N/A"
-                                            pdf.cell(200, 8, txt=f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {row['Calificacion']}/10 | Duracion: {tiempo_fila} | Falla en: {area_limpia}", ln=True)
-                                    else: pdf.cell(200, 8, txt="No hay examenes registrados para los usuarios seleccionados.", ln=True)
+                                            calif = row['Calificacion']
+                                            pdf.multi_cell(0, 6, txt=f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {calif}/10 | Area a mejorar: {area_limpia}")
+                                            
+                                        pdf_output = pdf.output(dest="S").encode("latin-1")
+                                        st.download_button(label="📄 Descargar Reporte PDF", data=pdf_output, file_name=f"Reporte_{limpiar_texto(distribuidor_selec)}_{hoy}.pdf", mime="application/pdf", type="primary")
                                         
-                                    pdf_output = pdf.output(dest="S").encode("latin-1")
-                                    st.download_button(label="📄 Descargar PDF de Desempeño", data=pdf_output, file_name=f"Reporte_{limpiar_texto(distribuidor_selec)}_{hoy}.pdf", mime="application/pdf", type="primary")
-                                except Exception as e: st.error(f"Error al generar el PDF: {e}")
-                    else: st.info("No hay distribuidores registrados.")
-                else: st.warning("⚠️ Librería FPDF no detectada.")
-            else: st.info("Aún no hay resultados de exámenes registrados.")
+                                    except Exception as e: 
+                                        st.error(f"Error al generar el PDF: {e}")
+                                else:
+                                    st.info("No hay resultados de exámenes para los filtros seleccionados.")
+                    else: 
+                        st.info("No hay distribuidores registrados.")
+                else: 
+                    st.warning("⚠️ Librería FPDF no detectada.")
+            else: 
+                st.info("Aún no hay resultados de exámenes registrados.")
         except Exception as e:
             if "WorksheetNotFound" in str(e): st.info("La pestaña 'Resultados_Examenes' no existe.")
             else: st.error(f"⚠️ Servidor saturado. Espera 1 minuto. Detalle: {e}")
