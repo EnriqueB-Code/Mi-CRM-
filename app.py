@@ -1589,14 +1589,20 @@ elif division == MENU_CAPA:
                                 res_usuarios = df_res_ex[df_res_ex['Usuario'].isin(usuarios_selec)]
                                 lista_examenes = res_usuarios['Examen'].unique().tolist() if not res_usuarios.empty else []
                                 
-                                # NUEVO PASO: Seleccionar el examen específico
+                                # Selección de examen específico
                                 examen_selec = st.selectbox("3. Selecciona el examen a reportar:", ["Todos"] + lista_examenes)
+                                
+                                # NUEVA OPCIÓN: ¿Incluir detalle de fallas?
+                                mostrar_detalle_fallas = st.radio("4. ¿Incluir detalle de preguntas falladas por usuario?", ["No", "Sí"], horizontal=True)
                                 
                                 resultados_filtro = res_usuarios.copy()
                                 if examen_selec != "Todos":
                                     resultados_filtro = resultados_filtro[resultados_filtro['Examen'] == examen_selec]
 
+                                # NUEVO FILTRO: Ordenar alfabéticamente en orden descendente (Z a A)
                                 if not resultados_filtro.empty:
+                                    resultados_filtro = resultados_filtro.sort_values(by='Usuario', ascending=False)
+                                    
                                     try:
                                         pdf = FPDF()
                                         pdf.add_page()
@@ -1625,11 +1631,10 @@ elif division == MENU_CAPA:
                                                 for item in items:
                                                     item = item.strip()
                                                     if not item: continue
-                                                    # Sacamos solo el texto de la pregunta quitando lo que eligió el usuario
                                                     pregunta_texto = item.split("(Eligió:")[0].strip() if "(Eligió:" in item else item
                                                     ids_fallados.append(pregunta_texto)
                                                     
-                                        conteo_fallas = collections.Counter(ids_fallados).most_common(5) # Top 5
+                                        conteo_fallas = collections.Counter(ids_fallados).most_common(5) 
                                         
                                         pdf.set_font("Arial", 'B', 12)
                                         pdf.cell(0, 10, txt="Preguntas Mas Falladas en este grupo (Top 5):", ln=True)
@@ -1637,7 +1642,6 @@ elif division == MENU_CAPA:
                                         
                                         if conteo_fallas:
                                             for preg, freq in conteo_fallas:
-                                                # Usamos multi_cell para que si la pregunta es muy larga, baje al siguiente renglón automáticamente
                                                 pdf.multi_cell(0, 6, txt=f"- Fallada {freq} veces: {limpiar_texto(preg)}")
                                         else:
                                             pdf.cell(0, 8, txt="- Excelente: Ninguna pregunta fue fallada o todos aprobaron perfecto.", ln=True)
@@ -1647,14 +1651,36 @@ elif division == MENU_CAPA:
                                         # --- RESULTADOS INDIVIDUALES ---
                                         pdf.set_font("Arial", 'B', 12)
                                         pdf.cell(0, 10, txt="Resultados Individuales:", ln=True)
-                                        pdf.set_font("Arial", '', 10)
                                         
                                         for _, row in resultados_filtro.iterrows():
                                             usr_limpio = limpiar_texto(row['Usuario'])
                                             ex_limpio = limpiar_texto(row['Examen'])
-                                            area_limpia = limpiar_texto(row['Area_Mas_Debil'])
                                             calif = row['Calificacion']
-                                            pdf.multi_cell(0, 6, txt=f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {calif}/10 | Area a mejorar: {area_limpia}")
+                                            
+                                            tiempo = row.get('Tiempo_Total', 'N/A')
+                                            if pd.isna(tiempo) or str(tiempo).strip().lower() == "nan" or str(tiempo).strip() == "":
+                                                tiempo = "N/A"
+                                            else:
+                                                tiempo = limpiar_texto(tiempo)
+                                            
+                                            # Formato limpio sin el "Área a mejorar"
+                                            pdf.set_font("Arial", 'B', 10)
+                                            pdf.multi_cell(0, 6, txt=f"-> {usr_limpio} | Examen: {ex_limpio} | Calif: {calif}/10 | Tiempo: {tiempo}")
+                                            
+                                            # Desglose de preguntas falladas
+                                            if mostrar_detalle_fallas == "Sí":
+                                                pdf.set_font("Arial", '', 9)
+                                                fallas_str = str(row.get('Preguntas_Falladas', 'Ninguna'))
+                                                
+                                                if fallas_str != "Ninguna" and fallas_str.strip() != "":
+                                                    items = fallas_str.split(" | ") if " | " in fallas_str else fallas_str.split(",")
+                                                    for item in items:
+                                                        item_limpio = limpiar_texto(item.strip())
+                                                        if item_limpio:
+                                                            pdf.multi_cell(0, 5, txt=f"      * Falla: {item_limpio}")
+                                                else:
+                                                    pdf.multi_cell(0, 5, txt=f"      * Falla: Ninguna (Examen perfecto)")
+                                                pdf.ln(2) 
                                             
                                         pdf_output = pdf.output(dest="S").encode("latin-1")
                                         st.download_button(label="📄 Descargar Reporte PDF", data=pdf_output, file_name=f"Reporte_{limpiar_texto(distribuidor_selec)}_{hoy}.pdf", mime="application/pdf", type="primary")
