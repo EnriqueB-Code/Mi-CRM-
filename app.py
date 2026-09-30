@@ -808,7 +808,7 @@ elif division == MENU_SERV:
         st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
         if st.session_state.get('area') not in ['Invitado', 'Invitados']:
-            st.write("### ⚙️️ Gestionar Casos")
+            st.write("### ⚙ Gestionar Casos")
             col_sel, col_up, col_down, col_pend, col_fin, col_del = st.columns([2, 1, 1, 1.5, 1.5, 1])
             with col_sel: id_gestion = st.selectbox("Selecciona ID:", df_servicio['ID'].unique(), key="gest_serv")
             with col_up:
@@ -818,7 +818,7 @@ elif division == MENU_SERV:
                     conn_servicio.update(data=df_servicio); st.rerun()
             with col_down:
                 st.write(""); st.write("")
-                if st.button("⬇️ Bajar", key="dw_s"):
+                if st.button("⬇️️ Bajar", key="dw_s"):
                     df_servicio = mover_fila(df_servicio, id_gestion, 'down')
                     conn_servicio.update(data=df_servicio); st.rerun()
                     
@@ -865,7 +865,6 @@ elif division == MENU_MKT:
         if 'Dias de licencia' in df_marketing.columns:
             df_marketing['Dias de licencia'] = df_marketing['Dias de licencia'].apply(limpiar_decimales)
 
-    hubo_cambios_mkt = False
     if not df_marketing.empty:
         for index, row in df_marketing.iterrows():
             if str(row['Estado']) != 'Finalizado':
@@ -882,18 +881,12 @@ elif division == MENU_MKT:
                     try:
                         venc_licencia = datetime.strptime(str(row['Vencimiento Licencia']), '%Y-%m-%d').date()
                         dias_lic_restantes = (venc_licencia - hoy).days
-                        if str(row['Dias de licencia']) != str(dias_lic_restantes):
-                            df_marketing.at[index, 'Dias de licencia'] = str(dias_lic_restantes)
-                            hubo_cambios_mkt = True
                         if 0 <= dias_lic_restantes <= 5: st.warning(f"🔑 **LICENCIA POR VENCER (ID: {id_prestamo}):** Contraseña de '{row['Equipo']}' de '{row['KOL']}' caduca en {dias_lic_restantes} días.")
                         elif dias_lic_restantes < 0: st.error(f"🚫 **LICENCIA CADUCADA (ID: {id_prestamo}):** Contraseña de '{row['Equipo']}' de '{row['KOL']}' venció hace {abs(dias_lic_restantes)} días.")
                     except ValueError: pass
-                    
-        if hubo_cambios_mkt and st.session_state.get('area') not in ['Invitado', 'Invitados']: 
-            conn_marketing.update(data=df_marketing)
 
     if st.session_state.get('area') not in ['Invitado', 'Invitados']:
-        tab_reg_m, tab_edit_m = st.tabs(["➕ Registrar Préstamo", "✏️ Editar Préstamo"])
+        tab_reg_m, tab_edit_m = st.tabs(["➕ Registrar Préstamo", "✏️️ Editar Préstamo"])
 
         with tab_reg_m:
             with st.form("nuevo_prestamo", clear_on_submit=True):
@@ -919,7 +912,7 @@ elif division == MENU_MKT:
                             venc_str, dias_str = "", ""
                         else:
                             v_lic = f_inicio + timedelta(days=dias_otorgados)
-                            venc_str, dias_str = str(v_lic), str((v_lic - hoy).days)
+                            venc_str, dias_str = str(v_lic), str(dias_otorgados)
 
                         nuevo_id = int(df_marketing['ID'].max() + 1) if not df_marketing.empty else 1
                         nuevo_reg = pd.DataFrame([{
@@ -965,7 +958,7 @@ elif division == MENU_MKT:
 
     st.subheader("Equipos en Préstamo")
     if not df_marketing.empty:
-        columnas_visibles = [c for c in df_marketing.columns if c != "Vencimiento Licencia"]
+        columnas_visibles = [c for c in df_marketing.columns] 
         st.dataframe(df_marketing[columnas_visibles].style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
         if st.session_state.get('area') not in ['Invitado', 'Invitados']:
@@ -995,12 +988,17 @@ elif division == MENU_MKT:
                             else:
                                 try: venc_actual = datetime.strptime(str(df_marketing.at[idx, 'Vencimiento Licencia']), '%Y-%m-%d').date()
                                 except: venc_actual = hoy
+                                
+                                try: dias_actuales = int(float(str(df_marketing.at[idx, 'Dias de licencia']).strip()))
+                                except: dias_actuales = 0
+
                                 nuevo_venc = venc_actual + timedelta(days=dias_extra)
+                                nuevos_dias = dias_actuales + dias_extra
                                 
                                 registrar_auditoria([{'modulo':'Marketing', 'id':id_mkt, 'campo':'Vencimiento Licencia', 'ant':str(venc_actual), 'nvo':str(nuevo_venc)}])
                                 df_marketing.at[idx, 'Vencimiento Licencia'] = str(nuevo_venc)
-                                df_marketing.at[idx, 'Dias de licencia'] = str((nuevo_venc - hoy).days)
-                                conn_marketing.update(data=df_marketing); st.success("Licencia actualizada."); st.rerun()
+                                df_marketing.at[idx, 'Dias de licencia'] = str(nuevos_dias)
+                                conn_marketing.update(data=df_marketing); st.success(f"Licencia actualizada a {nuevos_dias} días en total."); st.rerun()
                         else:
                             st.warning("⚠️ Ingresa un número distinto de 0.")
 
@@ -1064,7 +1062,7 @@ elif division == MENU_EVE:
         if "WorksheetNotFound" in error_str:
             st.error("⚠️ Google Sheets dice que la pestaña no existe. Verifica el nombre exacto de la pestaña 'Eventos'.")
         elif "429" in error_str or "Quota" in error_str:
-            st.error("⚠️ Servidor de Google saturado por consultas continuas. Espera 1 minuto y recarga la página.")
+            st.error("⚠️️ Servidor de Google saturado por consultas continuas. Espera 1 minuto y recarga la página.")
         else:
             st.error(f"⚠️ Error técnico de conexión: {error_str}")
             
@@ -1223,7 +1221,7 @@ elif division == MENU_INV:
             st.dataframe(df_nuevas, use_container_width=True, hide_index=True)
             
             if st.session_state.get('area') not in ['Invitado', 'Invitados']:
-                st.write("### ⚙️ Gestionar Piezas Nuevas")
+                st.write("### ⚙️️ Gestionar Piezas Nuevas")
                 with st.expander("✏️ Editar Pieza Nueva"):
                     id_ed_n = st.selectbox("Selecciona ID a editar:", df_nuevas['ID'].unique(), key="edit_sel_n")
                     if id_ed_n:
@@ -1803,7 +1801,7 @@ elif division == MENU_USR:
                 else: st.error("Por favor, llena todos los campos.")
                     
     st.markdown("---")
-    st.subheader("🕵️‍♂️ Registro de Auditoría (Cambios realizados)")
+    st.subheader("🕵️️‍♂️ Registro de Auditoría (Cambios realizados)")
     try:
         df_auditoria = conn_servicio.read(worksheet="Auditoria", ttl=0).dropna(how='all')
         if not df_auditoria.empty: st.dataframe(df_auditoria, use_container_width=True, hide_index=True)
