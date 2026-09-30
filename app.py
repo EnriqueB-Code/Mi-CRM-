@@ -722,7 +722,7 @@ elif division == MENU_SERV:
                 num_serie_str = str(num_serie).strip()
                 coincidencias = df_servicio[df_servicio['Numero de serie'] == num_serie_str]
                 if not coincidencias.empty:
-                    st.warning(f"⚠️️ El equipo '{num_serie_str}' ya tiene reportes.")
+                    st.warning(f"⚠ El equipo '{num_serie_str}' ya tiene reportes.")
                     id_actualizar = st.selectbox("ID del caso para agregar seguimiento:", coincidencias['ID'].unique())
                     nuevo_seguimiento = st.text_area("Agregar reporte:")
                     if st.button("📝 Guardar Seguimiento"):
@@ -808,7 +808,7 @@ elif division == MENU_SERV:
         st.dataframe(df_servicio.style.apply(color_filas, axis=1), use_container_width=True, hide_index=True)
         
         if st.session_state.get('area') not in ['Invitado', 'Invitados']:
-            st.write("### ⚙️ Gestionar Casos")
+            st.write("### ⚙️️ Gestionar Casos")
             col_sel, col_up, col_down, col_pend, col_fin, col_del = st.columns([2, 1, 1, 1.5, 1.5, 1])
             with col_sel: id_gestion = st.selectbox("Selecciona ID:", df_servicio['ID'].unique(), key="gest_serv")
             with col_up:
@@ -986,33 +986,39 @@ elif division == MENU_MKT:
                 
             with col_ren_lic:
                 with st.form("form_renovar_licencia", clear_on_submit=True):
-                    dias_extra = st.number_input("+ Días Licencia", min_value=1, step=1, value=1)
-                    if st.form_submit_button("🔑 Sumar Licencia"):
-                        idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
-                        if str(df_marketing.at[idx, 'Vencimiento Licencia']).strip() == "" and str(df_marketing.at[idx, 'Dias de licencia']).strip() == "":
-                            st.warning("⚠️ No maneja licencia.")
+                    dias_extra = st.number_input("± Días Licencia (Usa - para restar)", step=1, value=0)
+                    if st.form_submit_button("🔑 Aplicar Días"):
+                        if dias_extra != 0:
+                            idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
+                            if str(df_marketing.at[idx, 'Vencimiento Licencia']).strip() == "" and str(df_marketing.at[idx, 'Dias de licencia']).strip() == "":
+                                st.warning("⚠️ No maneja licencia.")
+                            else:
+                                try: venc_actual = datetime.strptime(str(df_marketing.at[idx, 'Vencimiento Licencia']), '%Y-%m-%d').date()
+                                except: venc_actual = hoy
+                                nuevo_venc = venc_actual + timedelta(days=dias_extra)
+                                
+                                registrar_auditoria([{'modulo':'Marketing', 'id':id_mkt, 'campo':'Vencimiento Licencia', 'ant':str(venc_actual), 'nvo':str(nuevo_venc)}])
+                                df_marketing.at[idx, 'Vencimiento Licencia'] = str(nuevo_venc)
+                                df_marketing.at[idx, 'Dias de licencia'] = str((nuevo_venc - hoy).days)
+                                conn_marketing.update(data=df_marketing); st.success("Licencia actualizada."); st.rerun()
                         else:
-                            try: venc_actual = datetime.strptime(str(df_marketing.at[idx, 'Vencimiento Licencia']), '%Y-%m-%d').date()
-                            except: venc_actual = hoy
-                            nuevo_venc = venc_actual + timedelta(days=dias_extra)
-                            
-                            registrar_auditoria([{'modulo':'Marketing', 'id':id_mkt, 'campo':'Vencimiento Licencia', 'ant':str(venc_actual), 'nvo':str(nuevo_venc)}])
-                            df_marketing.at[idx, 'Vencimiento Licencia'] = str(nuevo_venc)
-                            df_marketing.at[idx, 'Dias de licencia'] = str((nuevo_venc - hoy).days)
-                            conn_marketing.update(data=df_marketing); st.success("Licencia extendida."); st.rerun()
+                            st.warning("⚠️ Ingresa un número distinto de 0.")
 
             with col_ren_dev:
                 with st.form("form_renovar_devolucion", clear_on_submit=True):
-                    dias_extra_dev = st.number_input("+ Días Físicos", min_value=1, step=1, value=1)
-                    if st.form_submit_button("📦 Sumar Devolución"):
-                        idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
-                        try: fecha_dev_actual = datetime.strptime(str(df_marketing.at[idx, 'Fecha de finalizacion']), '%Y-%m-%d').date()
-                        except: fecha_dev_actual = hoy
-                        nueva_fecha_dev = fecha_dev_actual + timedelta(days=dias_extra_dev)
-                        
-                        registrar_auditoria([{'modulo':'Marketing', 'id':id_mkt, 'campo':'Fecha de finalizacion', 'ant':str(fecha_dev_actual), 'nvo':str(nueva_fecha_dev)}])
-                        df_marketing.at[idx, 'Fecha de finalizacion'] = str(nueva_fecha_dev)
-                        conn_marketing.update(data=df_marketing); st.success("Devolución extendida."); st.rerun()
+                    dias_extra_dev = st.number_input("± Días Físicos (Usa - para restar)", step=1, value=0)
+                    if st.form_submit_button("📦 Aplicar Días"):
+                        if dias_extra_dev != 0:
+                            idx = df_marketing.index[df_marketing['ID'] == id_mkt].tolist()[0]
+                            try: fecha_dev_actual = datetime.strptime(str(df_marketing.at[idx, 'Fecha de finalizacion']), '%Y-%m-%d').date()
+                            except: fecha_dev_actual = hoy
+                            nueva_fecha_dev = fecha_dev_actual + timedelta(days=dias_extra_dev)
+                            
+                            registrar_auditoria([{'modulo':'Marketing', 'id':id_mkt, 'campo':'Fecha de finalizacion', 'ant':str(fecha_dev_actual), 'nvo':str(nueva_fecha_dev)}])
+                            df_marketing.at[idx, 'Fecha de finalizacion'] = str(nueva_fecha_dev)
+                            conn_marketing.update(data=df_marketing); st.success("Devolución actualizada."); st.rerun()
+                        else:
+                            st.warning("⚠️ Ingresa un número distinto de 0.")
                     
             with col_fin_m:
                 st.write(""); st.write("")
@@ -1486,7 +1492,7 @@ elif division == MENU_CAPA:
                     
                     if st.session_state.get('area') == 'Admin':
                         st.markdown("---")
-                        st.write("### ⚙️️ Gestionar Distribuidores Individuales")
+                        st.write("### ⚙️ Gestionar Distribuidores Individuales")
                         usuario_a_gestionar = st.selectbox("Selecciona el Usuario a gestionar:", df_usr_ex['Usuario'].unique())
                         
                         if usuario_a_gestionar:
