@@ -722,7 +722,7 @@ elif division == MENU_SERV:
                 num_serie_str = str(num_serie).strip()
                 coincidencias = df_servicio[df_servicio['Numero de serie'] == num_serie_str]
                 if not coincidencias.empty:
-                    st.warning(f"⚠️ El equipo '{num_serie_str}' ya tiene reportes.")
+                    st.warning(f"⚠️️ El equipo '{num_serie_str}' ya tiene reportes.")
                     id_actualizar = st.selectbox("ID del caso para agregar seguimiento:", coincidencias['ID'].unique())
                     nuevo_seguimiento = st.text_area("Agregar reporte:")
                     if st.button("📝 Guardar Seguimiento"):
@@ -869,12 +869,13 @@ elif division == MENU_MKT:
     if not df_marketing.empty:
         for index, row in df_marketing.iterrows():
             if str(row['Estado']) != 'Finalizado':
+                id_prestamo = row['ID']
                 if str(row['Fecha de finalizacion']).strip() != "":
                     try:
                         fecha_retorno = datetime.strptime(str(row['Fecha de finalizacion']), '%Y-%m-%d').date()
                         dias_retorno = (fecha_retorno - hoy).days
-                        if 0 <= dias_retorno <= 5: st.warning(f"📦 **DEVOLUCIÓN PRÓXIMA:** '{row['Equipo']}' a '{row['KOL']}' devolver en {dias_retorno} días.")
-                        elif dias_retorno < 0: st.error(f"❌ **DEVOLUCIÓN VENCIDA:** '{row['KOL']}' debió devolver hace {abs(dias_retorno)} días.")
+                        if 0 <= dias_retorno <= 5: st.warning(f"📦 **DEVOLUCIÓN PRÓXIMA (ID: {id_prestamo}):** '{row['Equipo']}' a '{row['KOL']}' devolver en {dias_retorno} días.")
+                        elif dias_retorno < 0: st.error(f"❌ **DEVOLUCIÓN VENCIDA (ID: {id_prestamo}):** '{row['Equipo']}' a '{row['KOL']}' debió devolver hace {abs(dias_retorno)} días.")
                     except ValueError: pass
 
                 if str(row['Vencimiento Licencia']).strip() != "":
@@ -884,8 +885,8 @@ elif division == MENU_MKT:
                         if str(row['Dias de licencia']) != str(dias_lic_restantes):
                             df_marketing.at[index, 'Dias de licencia'] = str(dias_lic_restantes)
                             hubo_cambios_mkt = True
-                        if 0 <= dias_lic_restantes <= 5: st.warning(f"🔑 **LICENCIA POR VENCER:** Contraseña de '{row['Equipo']}' de '{row['KOL']}' caduca en {dias_lic_restantes} días.")
-                        elif dias_lic_restantes < 0: st.error(f"🚫 **LICENCIA CADUCADA:** Contraseña de '{row['Equipo']}' de '{row['KOL']}' venció hace {abs(dias_lic_restantes)} días.")
+                        if 0 <= dias_lic_restantes <= 5: st.warning(f"🔑 **LICENCIA POR VENCER (ID: {id_prestamo}):** Contraseña de '{row['Equipo']}' de '{row['KOL']}' caduca en {dias_lic_restantes} días.")
+                        elif dias_lic_restantes < 0: st.error(f"🚫 **LICENCIA CADUCADA (ID: {id_prestamo}):** Contraseña de '{row['Equipo']}' de '{row['KOL']}' venció hace {abs(dias_lic_restantes)} días.")
                     except ValueError: pass
                     
         if hubo_cambios_mkt and st.session_state.get('area') not in ['Invitado', 'Invitados']: 
@@ -1485,7 +1486,7 @@ elif division == MENU_CAPA:
                     
                     if st.session_state.get('area') == 'Admin':
                         st.markdown("---")
-                        st.write("### ⚙️ Gestionar Distribuidores Individuales")
+                        st.write("### ⚙️️ Gestionar Distribuidores Individuales")
                         usuario_a_gestionar = st.selectbox("Selecciona el Usuario a gestionar:", df_usr_ex['Usuario'].unique())
                         
                         if usuario_a_gestionar:
