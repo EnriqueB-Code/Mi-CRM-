@@ -818,7 +818,7 @@ elif division == MENU_SERV:
                     conn_servicio.update(data=df_servicio); st.rerun()
             with col_down:
                 st.write(""); st.write("")
-                if st.button("⬇️️ Bajar", key="dw_s"):
+                if st.button("⬇ Bajar", key="dw_s"):
                     df_servicio = mover_fila(df_servicio, id_gestion, 'down')
                     conn_servicio.update(data=df_servicio); st.rerun()
                     
@@ -886,7 +886,7 @@ elif division == MENU_MKT:
                     except ValueError: pass
 
     if st.session_state.get('area') not in ['Invitado', 'Invitados']:
-        tab_reg_m, tab_edit_m = st.tabs(["➕ Registrar Préstamo", "✏️️ Editar Préstamo"])
+        tab_reg_m, tab_edit_m = st.tabs(["➕ Registrar Préstamo", "✏ Editar Préstamo"])
 
         with tab_reg_m:
             with st.form("nuevo_prestamo", clear_on_submit=True):
@@ -1062,7 +1062,7 @@ elif division == MENU_EVE:
         if "WorksheetNotFound" in error_str:
             st.error("⚠️ Google Sheets dice que la pestaña no existe. Verifica el nombre exacto de la pestaña 'Eventos'.")
         elif "429" in error_str or "Quota" in error_str:
-            st.error("⚠️️ Servidor de Google saturado por consultas continuas. Espera 1 minuto y recarga la página.")
+            st.error("⚠ Servidor de Google saturado por consultas continuas. Espera 1 minuto y recarga la página.")
         else:
             st.error(f"⚠️ Error técnico de conexión: {error_str}")
             
@@ -1221,7 +1221,7 @@ elif division == MENU_INV:
             st.dataframe(df_nuevas, use_container_width=True, hide_index=True)
             
             if st.session_state.get('area') not in ['Invitado', 'Invitados']:
-                st.write("### ⚙️️ Gestionar Piezas Nuevas")
+                st.write("### ⚙ Gestionar Piezas Nuevas")
                 with st.expander("✏️ Editar Pieza Nueva"):
                     id_ed_n = st.selectbox("Selecciona ID a editar:", df_nuevas['ID'].unique(), key="edit_sel_n")
                     if id_ed_n:
@@ -1801,7 +1801,7 @@ elif division == MENU_USR:
                 else: st.error("Por favor, llena todos los campos.")
                     
     st.markdown("---")
-    st.subheader("🕵️️‍♂️ Registro de Auditoría (Cambios realizados)")
+    st.subheader("🕵‍♂️ Registro de Auditoría (Cambios realizados)")
     try:
         df_auditoria = conn_servicio.read(worksheet="Auditoria", ttl=0).dropna(how='all')
         if not df_auditoria.empty: st.dataframe(df_auditoria, use_container_width=True, hide_index=True)
